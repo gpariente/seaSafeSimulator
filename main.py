@@ -6,6 +6,7 @@ from simulator.ship import Ship
 from simulator.state import State
 from simulator.position import Position
 from simulator.action import Action
+from algorithm.algorithm import SearchAlgorithm
 
 pygame.init()
 
@@ -90,16 +91,11 @@ class Button:
                 self.callback()
 
 
-
 class ScenarioSimulation:
     def __init__(self, map_size_nm, horizon_nm, safety_zone_m, ship_width_m, ship_length_m, max_speed_knots, ships_data):
         self.map = scenario_map.Map(map_size_nm)
         self.horizon_nm = horizon_nm
-        
-        # Store safety_zone in meters, convert to pixels only when drawing
         self.safety_zone_m = safety_zone_m
-
-        # No more pixel conversion for ship dimensions here; pass meters directly to Ship
         self.ship_width_m = ship_width_m
         self.ship_length_m = ship_length_m
         self.max_speed_knots = max_speed_knots
@@ -112,7 +108,6 @@ class ScenarioSimulation:
             except:
                 continue
             
-            # Create positions in NM
             source_pos = Position(sx_nm, sy_nm)
             dest_pos = Position(dx_nm, dy_nm)
 
@@ -137,81 +132,41 @@ class ScenarioSimulation:
 
         self.scenario_ended = False
 
+        # Instantiate the search algorithm (this could be swapped easily)
+        self.search_algorithm = SearchAlgorithm()
+
     def update(self):
         self.state.increment_time_step()
 
         if not self.scenario_ended:
-            # Update ships assuming 1 second per frame (or adjust if needed)
-            self.state.update_ships()  # Now update_ships doesn't need pixel_per_nm, just time step
-
+            self.state.update_ships()
             if self.state.isGoalState():
                 self.scenario_ended = True
 
-        statuses = self.detect_collisions()
-        # Update ship statuses
-        for i, status in enumerate(statuses):
-            self.state.ships[i].set_status(status)
-        return statuses
-
-    def detect_collisions(self):
-        # We'll need safety zone in pixels only when checking collision distances in pixels?
-        # Actually, we now need to do collision detection in NM as well, since ships are in NM.
-
-        # Convert safety zone from m to NM to do collision checks in NM:
+        # Use the search algorithm to detect future collisions
         safety_zone_nm = self.safety_zone_m / METERS_PER_NM
-        collision_distance_nm = 2 * safety_zone_nm
+        ship_status = self.search_algorithm.detect_future_collision(
+            self.state,
+            self.horizon_steps,
+            safety_zone_nm
+        )
 
-        ship_status = ["Green"] * len(self.state.ships)
-
-        # Immediate collisions in NM
-        for i in range(len(self.state.ships)):
-            for j in range(i+1, len(self.state.ships)):
-                dist_nm = self.distance_nm(self.state.ships[i], self.state.ships[j])
-                if dist_nm < collision_distance_nm:
-                    ship_status[i] = "Red"
-                    ship_status[j] = "Red"
-
-        # Future collisions
-        if self.horizon_steps > 0:
-            collision_info_logged = False
-            for i in range(len(self.state.ships)):
-                if ship_status[i] == "Red":
-                    continue
-                for j in range(i+1, len(self.state.ships)):
-                    if ship_status[j] == "Red":
-                        continue
-                    for fstep in range(1, self.horizon_steps+1):
-                        fi_pos = self.state.ships[i].future_position(fstep)
-                        fj_pos = self.state.ships[j].future_position(fstep)
-                        fdist_nm = math.sqrt((fi_pos.x - fj_pos.x)**2 + (fi_pos.y - fj_pos.y)**2)
-                        if fdist_nm < collision_distance_nm:
-                            if ship_status[i] != "Red":
-                                ship_status[i] = "Orange"
-                            if ship_status[j] != "Red":
-                                ship_status[j] = "Orange"
-                            if not collision_info_logged:
-                                print(f"Future collision detected at current time step {self.state.time_step}, "
-                                      f"future step {fstep}, horizon steps {self.horizon_steps}")
-                                collision_info_logged = True
-                            break
+        for i, status in enumerate(ship_status):
+            self.state.ships[i].set_status(status)
 
         return ship_status
 
-    def distance_nm(self, ship1, ship2):
-        dx = ship1.cx_nm - ship2.cx_nm
-        dy = ship1.cy_nm - ship2.cy_nm
-        return math.sqrt(dx*dx + dy*dy)
+    @property
+    def time_step(self):
+        return self.state.time_step
 
     def draw_ships(self, ship_status):
-        # Convert NM and m to pixels here for drawing
+        # Convert NM and m to pixels for rendering
         safety_zone_px = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm)
         
         for idx, ship in enumerate(self.state.ships):
-            # Convert ship position in NM to pixels
             ship_px_x = int(ship.cx_nm * self.map.pixel_per_nm)
             ship_px_y = int(ship.cy_nm * self.map.pixel_per_nm)
-
-            # Convert ship dimensions from meters to pixels
             width_px = self.map.meters_to_pixels(ship.width_m)
             length_px = self.map.meters_to_pixels(ship.length_m)
 
@@ -229,10 +184,6 @@ class ScenarioSimulation:
             pygame.draw.rect(SCREEN, BLACK, ship_rect)
             pygame.draw.circle(SCREEN, RED, (ship_px_x, ship_px_y), 3)
 
-
-    @property
-    def time_step(self):
-        return self.state.time_step
 
 def main_menu():
     logo_surface = TITLE_FONT.render("SeaSafe", True, WHITE)
@@ -252,7 +203,6 @@ def main_menu():
     running = True
     while running:
         SCREEN.fill(DARK_BLUE)
-
         SCREEN.blit(logo_surface, logo_rect)
         SCREEN.blit(subtitle_surface, subtitle_rect)
 
@@ -321,7 +271,6 @@ def new_scenario():
     while running:
         SCREEN.fill(WHITE)
 
-        # Labels
         labels = [
             "Map Size (Nautical Miles):", "Number of Ships:", "Horizon Distance (NM):",
             "Safety Zone Distance (m):", "Ship Width (m):", "Ship Length (m):", "Max Speed (knots):"
@@ -331,7 +280,6 @@ def new_scenario():
             SCREEN.blit(label_surface, (150, 100 + i * 50))
             input_boxes[list(input_boxes.keys())[i]].draw(SCREEN)
 
-        # Draw ship input boxes if any
         for i, (src_box, dest_box) in enumerate(source_dest_boxes):
             source_label = INPUT_FONT.render(f"Ship {i + 1} Source (NM,NM):", True, BLACK)
             dest_label = INPUT_FONT.render("Destination (NM,NM):", True, BLACK)
@@ -357,7 +305,6 @@ def new_scenario():
 
             submit_button.check_click(event)
 
-        # After handling all events, check if the number of ships changed
         num_ships_text = input_boxes["num_ships"].get_text()
         num_ships = int(num_ships_text) if num_ships_text.isdigit() else 0
 
@@ -366,7 +313,6 @@ def new_scenario():
             update_ship_inputs(current_num_ships)
 
         pygame.display.flip()
-
 
 def start_scenario(inputs):
     map_size_nm = float(inputs.get("map_size", "100") or "100")  
@@ -391,12 +337,9 @@ def start_scenario(inputs):
                 pygame.quit()
                 sys.exit()
 
-        # Update the scenario
         ship_status = simulation.update()
 
-        # Draw
         SCREEN.fill(BLUE)
-        # Draw time step and scenario status
         time_surface = INPUT_FONT.render(f"Time Step: {simulation.time_step}", True, WHITE)
         SCREEN.blit(time_surface, (10,10))
 
