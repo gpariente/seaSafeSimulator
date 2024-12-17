@@ -10,12 +10,10 @@ from algorithm.algorithm import SearchAlgorithm
 
 pygame.init()
 
-# Screen dimensions
 WIDTH, HEIGHT = 1000, 1000
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("SeaSafe - Simulator")
 
-# Colors
 WHITE = (255, 255, 255)
 BLUE = (135, 206, 250)
 GRAY = (200, 200, 200)
@@ -25,12 +23,10 @@ GREEN = (0, 255, 0)
 ORANGE = (255, 165, 0)
 RED = (255, 0, 0)
 
-# Fonts
 TITLE_FONT = pygame.font.Font(pygame.font.get_default_font(), 50)
 BUTTON_FONT = pygame.font.Font(pygame.font.get_default_font(), 30)
 INPUT_FONT = pygame.font.Font(pygame.font.get_default_font(), 20)
 
-# Unit Conversion Constants
 METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
@@ -90,7 +86,6 @@ class Button:
             if event.button == 1 and self.rect.collidepoint(event.pos):
                 self.callback()
 
-
 class ScenarioSimulation:
     def __init__(self, map_size_nm, horizon_nm, safety_zone_m, ship_width_m, ship_length_m, max_speed_knots, ships_data):
         self.map = scenario_map.Map(map_size_nm)
@@ -124,15 +119,12 @@ class ScenarioSimulation:
 
         self.state = State(time_step=0, ships=ships)
 
-        # Compute horizon steps in seconds
         if max_speed_knots > 0:
             self.horizon_steps = int((horizon_nm * SECONDS_PER_HOUR) / max_speed_knots)
         else:
             self.horizon_steps = 0
 
         self.scenario_ended = False
-
-        # Instantiate the search algorithm (this could be swapped easily)
         self.search_algorithm = SearchAlgorithm()
 
     def update(self):
@@ -143,7 +135,6 @@ class ScenarioSimulation:
             if self.state.isGoalState():
                 self.scenario_ended = True
 
-        # Use the search algorithm to detect future collisions
         safety_zone_nm = self.safety_zone_m / METERS_PER_NM
         ship_status = self.search_algorithm.detect_future_collision(
             self.state,
@@ -161,7 +152,6 @@ class ScenarioSimulation:
         return self.state.time_step
 
     def draw_ships(self, ship_status):
-        # Convert NM and m to pixels for rendering
         safety_zone_px = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm)
         
         for idx, ship in enumerate(self.state.ships):
@@ -177,13 +167,26 @@ class ScenarioSimulation:
             }
             color = status_color_map[ship_status[idx]]
 
+            # Draw safety zone
             pygame.draw.circle(SCREEN, color, (ship_px_x, ship_px_y), safety_zone_px, 2)
+            # Draw ship rectangle
             left = ship_px_x - width_px/2
             top = ship_px_y - length_px/2
             ship_rect = pygame.Rect(left, top, width_px, length_px)
             pygame.draw.rect(SCREEN, BLACK, ship_rect)
+            # Red dot at center
             pygame.draw.circle(SCREEN, RED, (ship_px_x, ship_px_y), 3)
 
+            # If ship is Orange (future collision), show scenario and role
+            if ship_status[idx] == "Orange" and ship.scenario is not None and ship.role is not None:
+                label_font = INPUT_FONT
+                label_text = f"Scenario: {ship.scenario}, Role: {ship.role}"
+                label_surface = label_font.render(label_text, True, WHITE)
+                # Draw it above the ship
+                label_x = ship_px_x - label_surface.get_width()//2
+                label_y = ship_px_y - length_px/2 - label_surface.get_height() - 5
+                pygame.draw.rect(SCREEN, BLACK, (label_x - 2, label_y - 2, label_surface.get_width() + 4, label_surface.get_height() + 4))
+                SCREEN.blit(label_surface, (label_x, label_y))
 
 def main_menu():
     logo_surface = TITLE_FONT.render("SeaSafe", True, WHITE)
@@ -221,7 +224,6 @@ def main_menu():
         pygame.display.flip()
 
 def new_scenario():
-    # Set default values as requested
     default_values = {
         "map_size": "3",
         "num_ships": "2",
@@ -253,7 +255,6 @@ def new_scenario():
             dest_box = InputBox(600, 500 + i * 60, 150, 30, "3,3" if i == 0 else "0,0")
             source_dest_boxes.append((source_box, dest_box))
 
-    # Initialize ship inputs based on default number of ships
     update_ship_inputs(current_num_ships)
 
     def collect_inputs():
