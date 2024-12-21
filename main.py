@@ -30,6 +30,26 @@ INPUT_FONT = pygame.font.Font(pygame.font.get_default_font(), 20)
 METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
+# Each time step in the simulation = 30 real-world seconds
+TIME_STEP_SECONDS = 1
+
+# Images
+logo_image = pygame.image.load("images/logo.png").convert_alpha()
+# Scale the logo bigger, e.g. double size:
+logo_w, logo_h = logo_image.get_width(), logo_image.get_height()
+logo_image = pygame.transform.scale(logo_image, (logo_w * 2, logo_h * 2))
+
+sea_bg = pygame.image.load("images/sea_background.png").convert()
+sea_bg = pygame.transform.scale(sea_bg, (WIDTH, HEIGHT))
+# Slower background movement
+bg_scroll_speed = 0.05
+
+ship_sprite = pygame.image.load("images/ship_sprite.png").convert_alpha()
+# Scale sprite based on ship size. Since we don't know exact scale, just keep fixed for now.
+# We'll dynamically scale in draw_ships based on ship width and length.
+# For a default sprite size, keep as a base:
+base_ship_sprite = ship_sprite
+
 class InputBox:
     def __init__(self, x, y, w, h, text=""):
         self.rect = pygame.Rect(x, y, w, h)
@@ -64,20 +84,23 @@ class Button:
         self.text = text
         self.rect = pygame.Rect(x, y, width, height)
         self.callback = callback
-        self.color = GRAY
-        self.hover_color = DARK_BLUE
-        self.text_color = DARK_BLUE
-        self.text_hover_color = WHITE
+        self.base_color = (0, 76, 153)  # Deep blue for water theme
+        self.hover_color = (51, 153, 255)  # Light blue
+        self.border_color = (255, 255, 255)  # White border
+        self.text_color = (255, 255, 255)
+        self.hover_text_color = (0, 76, 153)
 
     def draw(self, screen):
         mouse_pos = pygame.mouse.get_pos()
-        if self.rect.collidepoint(mouse_pos):
-            pygame.draw.rect(screen, self.hover_color, self.rect)
-            text_surface = BUTTON_FONT.render(self.text, True, self.text_hover_color)
-        else:
-            pygame.draw.rect(screen, self.color, self.rect)
-            text_surface = BUTTON_FONT.render(self.text, True, self.text_color)
-        
+        is_hovered = self.rect.collidepoint(mouse_pos)
+        color = self.hover_color if is_hovered else self.base_color
+
+        # Rounded rectangle (simulate rounded corners)
+        pygame.draw.rect(screen, color, self.rect, border_radius=15)
+        pygame.draw.rect(screen, self.border_color, self.rect, width=3, border_radius=15)
+
+        # Render text
+        text_surface = BUTTON_FONT.render(self.text, True, self.hover_text_color if is_hovered else self.text_color)
         text_rect = text_surface.get_rect(center=self.rect.center)
         screen.blit(text_surface, text_rect)
 
@@ -129,9 +152,10 @@ class ScenarioSimulation:
 
     def update(self):
         self.state.increment_time_step()
+        # Update ships with TIME_STEP_SECONDS = 30 sec
+        self.state.update_ships(delta_seconds=TIME_STEP_SECONDS)
 
         if not self.scenario_ended:
-            self.state.update_ships()
             if self.state.isGoalState():
                 self.scenario_ended = True
 
@@ -152,13 +176,32 @@ class ScenarioSimulation:
         return self.state.time_step
 
     def draw_ships(self, ship_status):
+        global base_ship_sprite
         safety_zone_px = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm)
-        
+
         for idx, ship in enumerate(self.state.ships):
             ship_px_x = int(ship.cx_nm * self.map.pixel_per_nm)
             ship_px_y = int(ship.cy_nm * self.map.pixel_per_nm)
+            
+            # Convert ship width/length in meters to pixels:
             width_px = self.map.meters_to_pixels(ship.width_m)
             length_px = self.map.meters_to_pixels(ship.length_m)
+
+            # Scale ship sprite according to ship size
+            # If ship sprite originally 50x50, scale it so that length_px matches sprite length
+            # Assume length corresponds to the major dimension (like the ship's heading direction)
+            # We'll scale so that the sprite's largest dimension matches ship length in pixels
+            # If the ship sprite is originally square, just scale both sides accordingly
+            if length_px > 0 and width_px > 0:
+                # Keep aspect ratio, sprite originally 50x50
+                # scale_x = width_px/50, scale_y = length_px/50, pick min or max?
+                # If we assume length is along the ship's direction, use length_px as major dimension:
+                # let's match length_px to 50 pixels:
+                scale_x = width_px / 50.0
+                scale_y = length_px / 50.0
+                scaled_sprite = pygame.transform.smoothscale(base_ship_sprite, (int(50*scale_x), int(50*scale_y)))
+            else:
+                scaled_sprite = base_ship_sprite
 
             status_color_map = {
                 "Green": GREEN,
@@ -166,49 +209,45 @@ class ScenarioSimulation:
                 "Red": RED
             }
             color = status_color_map[ship_status[idx]]
-
-            # Draw safety zone
             pygame.draw.circle(SCREEN, color, (ship_px_x, ship_px_y), safety_zone_px, 2)
-            # Draw ship rectangle
-            left = ship_px_x - width_px/2
-            top = ship_px_y - length_px/2
-            ship_rect = pygame.Rect(left, top, width_px, length_px)
-            pygame.draw.rect(SCREEN, BLACK, ship_rect)
-            # Red dot at center
-            pygame.draw.circle(SCREEN, RED, (ship_px_x, ship_px_y), 3)
 
-            # If ship is Orange (future collision), show scenario and role
+            heading = ship.get_heading_from_direction()
+            # If direction seems wrong, try removing the minus sign:
+            rotated_ship = pygame.transform.rotate(scaled_sprite, heading)
+
+            ship_rect = rotated_ship.get_rect(center=(ship_px_x, ship_px_y))
+            SCREEN.blit(rotated_ship, ship_rect)
+
+            # Draw scenario/role label if Orange
             if ship_status[idx] == "Orange" and ship.scenario is not None and ship.role is not None:
                 label_font = INPUT_FONT
                 label_text = f"Scenario: {ship.scenario}, Role: {ship.role}"
                 label_surface = label_font.render(label_text, True, WHITE)
-                # Draw it above the ship
+                # Place label above ship: use ship_rect to position
                 label_x = ship_px_x - label_surface.get_width()//2
-                label_y = ship_px_y - length_px/2 - label_surface.get_height() - 5
+                label_y = ship_px_y - (ship_rect.height//2) - label_surface.get_height() - 5
                 pygame.draw.rect(SCREEN, BLACK, (label_x - 2, label_y - 2, label_surface.get_width() + 4, label_surface.get_height() + 4))
                 SCREEN.blit(label_surface, (label_x, label_y))
 
 def main_menu():
-    logo_surface = TITLE_FONT.render("SeaSafe", True, WHITE)
-    subtitle_surface = INPUT_FONT.render("Collision Avoidance for Ships Simulator", True, WHITE)
-    logo_rect = logo_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4))
-    subtitle_rect = subtitle_surface.get_rect(center=(WIDTH // 2, HEIGHT // 4 + 50))
-
     def new_scenario_callback():
         new_scenario()
 
+    button_width, button_height = 300, 60
+    button_spacing = 20
+    button_start_y = HEIGHT // 2 - (button_height * 1.5 + button_spacing)
+
     buttons = [
-        Button("New Scenario", WIDTH // 2 - 100, HEIGHT // 2 - 50, 200, 50, new_scenario_callback),
-        Button("Load Scenario", WIDTH // 2 - 100, HEIGHT // 2 + 20, 200, 50, lambda: print("Load Scenario")),
-        Button("Exit", WIDTH // 2 - 100, HEIGHT // 2 + 90, 200, 50, lambda: pygame.quit()),
+        Button("New Scenario", WIDTH // 2 - button_width // 2, button_start_y, button_width, button_height, new_scenario_callback),
+        Button("Load Scenario", WIDTH // 2 - button_width // 2, button_start_y + button_height + button_spacing, button_width, button_height, lambda: print("Load Scenario")),
+        Button("Exit", WIDTH // 2 - button_width // 2, button_start_y + 2 * (button_height + button_spacing), button_width, button_height, lambda: pygame.quit()),
     ]
 
     running = True
-    while running:
-        SCREEN.fill(DARK_BLUE)
-        SCREEN.blit(logo_surface, logo_rect)
-        SCREEN.blit(subtitle_surface, subtitle_rect)
+    bg_offset_x = 0
+    global bg_scroll_speed
 
+    while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -217,6 +256,15 @@ def main_menu():
 
             for button in buttons:
                 button.check_click(event)
+
+        # Animate background
+        bg_offset_x = (bg_offset_x + bg_scroll_speed) % WIDTH
+        SCREEN.blit(sea_bg, (-bg_offset_x, 0))
+        SCREEN.blit(sea_bg, (-bg_offset_x + WIDTH, 0))
+
+        # Draw larger logo
+        logo_rect = logo_image.get_rect(center=(WIDTH // 2, HEIGHT // 4))
+        SCREEN.blit(logo_image, logo_rect)
 
         for button in buttons:
             button.draw(SCREEN)

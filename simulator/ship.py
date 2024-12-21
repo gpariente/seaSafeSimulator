@@ -1,5 +1,3 @@
-# simulator/ship.py
-
 import math
 from simulator.position import Position
 
@@ -13,12 +11,11 @@ class Ship:
         self.maxSpeed = max_speed_knots
         self.currentSpeed = max_speed_knots
         self.role = role
-        self.scenario = None  # Added scenario attribute
-        # Current position starts at source
+        self.scenario = None  # scenario attribute
         self.cx_nm = self.source_nm_pos.x
         self.cy_nm = self.source_nm_pos.y
 
-        # Calculate direction
+        # Calculate initial direction
         dx = self.destination_nm_pos.x - self.cx_nm
         dy = self.destination_nm_pos.y - self.cy_nm
         dist_dir = math.sqrt(dx*dx + dy*dy)
@@ -28,7 +25,6 @@ class Ship:
             self.direction = (0,0)
 
     def update_position(self, delta_seconds=1.0):
-        # nm/sec
         nm_per_sec = self.currentSpeed / 3600.0
         dx = self.destination_nm_pos.x - self.cx_nm
         dy = self.destination_nm_pos.y - self.cy_nm
@@ -53,5 +49,34 @@ class Ship:
         return Position(fx, fy)
 
     def set_status(self, status):
-        # If needed, handle status changes here
         pass
+
+    def change_speed(self, speedChange):
+        # speedChange in knots: +10, -10, or 0
+        new_speed = self.currentSpeed + speedChange
+        if new_speed < 0:
+            new_speed = 0
+        if new_speed > self.maxSpeed:
+            new_speed = self.maxSpeed
+        self.currentSpeed = new_speed
+
+    def change_heading(self, headingChange):
+        # headingChange in degrees: ±10° or 0°
+        # Convert current direction to heading:
+        current_heading = self.get_heading_from_direction()
+        new_heading = (current_heading + headingChange) % 360
+        self.direction = self.get_direction_from_heading(new_heading)
+
+    def get_heading_from_direction(self):
+        dx, dy = self.direction
+        angle_rad = math.atan2(dy, dx)
+        angle_deg = math.degrees(angle_rad)
+        if angle_deg < 0:
+            angle_deg += 360
+        return angle_deg
+
+    def get_direction_from_heading(self, heading_deg):
+        rad = math.radians(heading_deg)
+        dx = math.cos(rad)
+        dy = math.sin(rad)
+        return (dx, dy)
