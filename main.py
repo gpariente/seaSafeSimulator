@@ -12,11 +12,22 @@ from algorithm.algorithm import ColregsAlgorithm
 
 pygame.init()
 
-# Screen and color definitions
-WIDTH, HEIGHT = 1000, 1000
-SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("SeaSafe - Simulator")
+# =============================
+# 1) Declare global WIDTH/HEIGHT at top-level,
+#    with some default. We'll set them properly after we get the display info.
+DEFAULT_WIDTH, DEFAULT_HEIGHT = 1000, 1000  # default fallback
 
+# 2) After we get the display info, we'll override these with a fraction of user's screen
+infoObject = pygame.display.Info()
+# For example, let's do 80% of user’s screen resolution
+WIDTH = int(infoObject.current_w * 0.8)
+HEIGHT = int(infoObject.current_h * 0.8)
+
+# We'll create a resizable window
+SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+pygame.display.set_caption("SeaSafe - Simulator (Adjustable)")
+
+# Define Colors
 WHITE = (255, 255, 255)
 BLUE = (135, 206, 250)
 GRAY = (200, 200, 200)
@@ -26,40 +37,90 @@ GREEN = (0, 255, 0)
 ORANGE = (255, 165, 0)
 RED = (255, 0, 0)
 
-TITLE_FONT = pygame.font.Font(pygame.font.get_default_font(), 50)
-BUTTON_FONT = pygame.font.Font(pygame.font.get_default_font(), 30)
-INPUT_FONT = pygame.font.Font(pygame.font.get_default_font(), 20)
+# Define Fonts (sizes will be dynamic based on window size)
+def get_dynamic_font(size_ratio):
+    return pygame.font.Font(pygame.font.get_default_font(), int(min(WIDTH, HEIGHT) * size_ratio))
 
-# Conversions
+TITLE_FONT = get_dynamic_font(0.05)    # 5% of min dimension
+BUTTON_FONT = get_dynamic_font(0.03)   # 3% of min dimension
+INPUT_FONT = get_dynamic_font(0.02)    # 2% of min dimension
+
 METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
-# =============================
-# ========== NEW ==============
-# Instead of TIME_STEP_SECONDS for each frame,
-# we'll define a "physics" step (30s) and how many real seconds we want it to take on screen.
-PHYSICS_STEP = 10.0          # each collision/physics step is 30 seconds of sim time
-REAL_SECONDS_PER_STEP = 0.5  # each 30s sim step takes 2 real seconds to pass visually
-# =============================
+PHYSICS_STEP = 30.0          # each collision/logic step = 30s sim time
+REAL_SECONDS_PER_STEP = 2.0  # after 2 real seconds, we do a 30s step
 
-logo_image = pygame.image.load("images/logo.png").convert_alpha()
-logo_w, logo_h = logo_image.get_width(), logo_image.get_height()
-logo_image = pygame.transform.scale(logo_image, (logo_w * 2, logo_h * 2))
+# Initialize sea_bg and logo_image
+sea_bg = None
+logo_image = None
 
-sea_bg = pygame.image.load("images/sea_background.png").convert()
-sea_bg = pygame.transform.scale(sea_bg, (WIDTH, HEIGHT))
+# Load & scale the images according to current WIDTH, HEIGHT
+try:
+    logo_image_raw = pygame.image.load("images/logo.png").convert_alpha()
+except pygame.error as e:
+    print(f"Unable to load logo.png: {e}")
+    sys.exit()
+
+try:
+    sea_bg_raw = pygame.image.load("images/sea_background.png").convert()
+except pygame.error as e:
+    print(f"Unable to load sea_background.png: {e}")
+    sys.exit()
+
 bg_scroll_speed = 0.05
 
+def scale_images_to_window():
+    """
+    Re-scale background and logo to fit the current (WIDTH, HEIGHT).
+    Also update fonts based on window size.
+    """
+    global logo_image, sea_bg, WIDTH, HEIGHT, TITLE_FONT, BUTTON_FONT, INPUT_FONT
+
+    # Update fonts
+    TITLE_FONT = get_dynamic_font(0.05)    # 5% of min dimension
+    BUTTON_FONT = get_dynamic_font(0.03)   # 3% of min dimension
+    INPUT_FONT = get_dynamic_font(0.02)    # 2% of min dimension
+
+    # Background
+    sea_bg = pygame.transform.scale(sea_bg_raw, (WIDTH, HEIGHT))
+
+    # Logo
+    logo_rect = logo_image_raw.get_rect()
+    scale_factor = 0.3  # 30% of window width
+    new_w = int(WIDTH * scale_factor)
+    aspect = logo_rect.height / logo_rect.width
+    new_h = int(new_w * aspect)
+    logo_image = pygame.transform.smoothscale(logo_image_raw, (new_w, new_h))
+
+# Immediately scale images to our new initial WIDTH & HEIGHT
+scale_images_to_window()
 
 class InputBox:
     """Simple text input widget."""
-    def __init__(self, x, y, w, h, text=""):
-        self.rect = pygame.Rect(x, y, w, h)
-        self.color = GRAY
+    def __init__(self, rel_x, rel_y, rel_w, rel_h, text=""):
+        """
+        Positions and sizes are relative (0 to 1) based on current window size.
+        """
+        self.rel_x = rel_x
+        self.rel_y = rel_y
+        self.rel_w = rel_w
+        self.rel_h = rel_h
         self.text = text
+        self.color = GRAY
         self.font = INPUT_FONT
         self.txt_surface = self.font.render(text, True, BLACK)
         self.active = False
+        self.update_rect()
+
+    def update_rect(self):
+        """Update the actual rect based on relative positions and current WIDTH and HEIGHT."""
+        self.rect = pygame.Rect(
+            int(self.rel_x * WIDTH),
+            int(self.rel_y * HEIGHT),
+            int(self.rel_w * WIDTH),
+            int(self.rel_h * HEIGHT)
+        )
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -70,32 +131,60 @@ class InputBox:
             elif event.key == pygame.K_BACKSPACE:
                 self.text = self.text[:-1]
             else:
+                # Limit input length if necessary
                 self.text += event.unicode
             self.txt_surface = self.font.render(self.text, True, BLACK)
 
     def draw(self, screen):
+        # Update rect in case window size changed
+        self.update_rect()
         pygame.draw.rect(screen, self.color, self.rect, 0)
-        screen.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + 5))
-        # Draw border
+        # Adjust text position based on current rect
+        screen.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + (self.rect.height - self.txt_surface.get_height()) // 2))
         pygame.draw.rect(screen, DARK_BLUE if self.active else BLACK, self.rect, 2)
 
     def get_text(self):
         return self.text
 
+    def update_font(self):
+        """Update the font size based on current window size."""
+        self.font = INPUT_FONT
+        self.txt_surface = self.font.render(self.text, True, BLACK)
 
 class Button:
     """Simple button with callback."""
-    def __init__(self, text, x, y, width, height, callback):
+    def __init__(self, text, rel_x, rel_y, rel_width, rel_height, callback):
+        """
+        Positions and sizes are relative (0 to 1) based on current window size.
+        """
         self.text = text
-        self.rect = pygame.Rect(x, y, width, height)
+        self.rel_x = rel_x
+        self.rel_y = rel_y
+        self.rel_width = rel_width
+        self.rel_height = rel_height
         self.callback = callback
-        self.base_color = (0, 76, 153)   # Darkish blue
+        self.base_color = (0, 76, 153)
         self.hover_color = (51, 153, 255)
         self.border_color = (255, 255, 255)
         self.text_color = (255, 255, 255)
         self.hover_text_color = (0, 76, 153)
+        self.font = BUTTON_FONT
+        self.update_rect()
+
+    def update_rect(self):
+        """Update the actual rect based on relative positions and current WIDTH and HEIGHT."""
+        self.rect = pygame.Rect(
+            int(self.rel_x * WIDTH),
+            int(self.rel_y * HEIGHT),
+            int(self.rel_width * WIDTH),
+            int(self.rel_height * HEIGHT)
+        )
 
     def draw(self, screen):
+        # Update rect and font in case window size changed
+        self.update_rect()
+        self.update_font()
+
         mouse_pos = pygame.mouse.get_pos()
         is_hovered = self.rect.collidepoint(mouse_pos)
         color = self.hover_color if is_hovered else self.base_color
@@ -103,8 +192,10 @@ class Button:
         pygame.draw.rect(screen, color, self.rect, border_radius=15)
         pygame.draw.rect(screen, self.border_color, self.rect, width=3, border_radius=15)
 
-        text_surface = BUTTON_FONT.render(self.text, True,
-                        self.hover_text_color if is_hovered else self.text_color)
+        text_surface = self.font.render(
+            self.text, True,
+            self.hover_text_color if is_hovered else self.text_color
+        )
         text_rect = text_surface.get_rect(center=self.rect.center)
         screen.blit(text_surface, text_rect)
 
@@ -113,15 +204,19 @@ class Button:
             if event.button == 1 and self.rect.collidepoint(event.pos):
                 self.callback()
 
+    def update_font(self):
+        """Update the font size based on current window size."""
+        self.font = BUTTON_FONT
 
 class ScenarioSimulation:
     """
     Handles the main simulator loop for collisions, time-stepping, and rendering.
     """
     def __init__(self, map_size_nm, horizon_nm, safety_zone_m,
-                 ship_width_m, ship_length_m, max_speed_knots, ships_data):
+                 ship_width_m, ship_length_m, max_speed_knots, ships_data,
+                 window_width, window_height):
 
-        self.map = scenario_map.Map(map_size_nm)
+        self.map = scenario_map.Map(map_size_nm, window_width, window_height)
         self.horizon_nm = horizon_nm
         self.safety_zone_m = safety_zone_m
         self.ship_width_m = ship_width_m
@@ -131,14 +226,13 @@ class ScenarioSimulation:
         ships = []
         for i, sd in enumerate(ships_data):
             try:
-                sx_nm, sy_nm = map(float, sd["source"].split(","))  
+                sx_nm, sy_nm = map(float, sd["source"].split(","))
                 dx_nm, dy_nm = map(float, sd["destination"].split(","))  
             except:
                 continue
 
             source_pos = Position(sx_nm, sy_nm)
             dest_pos = Position(dx_nm, dy_nm)
-
             ship = Ship(
                 ship_id=i,
                 source_nm_pos=source_pos,
@@ -153,9 +247,8 @@ class ScenarioSimulation:
         self.state = State(time_step=0, ships=ships)
         self.scenario_ended = False
 
-        # We'll interpret horizon_steps in terms of how many "PHYSICS_STEP" increments. 
         if self.max_speed_knots > 0:
-            steps_per_hour = 3600.0 / PHYSICS_STEP  # how many big steps in an hour
+            steps_per_hour = 3600.0 / PHYSICS_STEP
             self.horizon_steps = int(horizon_nm * steps_per_hour / max_speed_knots)
         else:
             self.horizon_steps = 0
@@ -163,11 +256,6 @@ class ScenarioSimulation:
         self.search_algorithm = ColregsAlgorithm()
 
     def physics_step(self):
-        """
-        Perform exactly one PHYSICS_STEP of simulation time:
-          1) collision detection => actions
-          2) move ships by PHYSICS_STEP
-        """
         safety_zone_nm = self.safety_zone_m / METERS_PER_NM
         statuses, auto_actions = self.search_algorithm.step(
             self.state,
@@ -175,25 +263,20 @@ class ScenarioSimulation:
             safety_zone_nm=safety_zone_nm,
             horizon_nm=self.horizon_nm
         )
-
-        # Apply the algorithm's recommended actions
         for action in auto_actions:
             if 0 <= action.shipId < len(self.state.ships):
-                ship = self.state.ships[action.shipId]
+                shp = self.state.ships[action.shipId]
                 if abs(action.headingChange) > 1e-6:
-                    ship.change_heading(action.headingChange)
+                    shp.change_heading(action.headingChange)
                 if abs(action.speedChange) > 1e-6:
-                    ship.change_speed(action.speedChange)
+                    shp.change_speed(action.speedChange)
 
-        # Update each ship's status
-        for i, status in enumerate(statuses):
-            self.state.ships[i].set_status(status)
+        for i, st in enumerate(statuses):
+            self.state.ships[i].set_status(st)
 
-        # Now jump forward PHYSICS_STEP in sim time
         self.state.increment_time_step()
         self.state.update_ships(delta_seconds=PHYSICS_STEP)
 
-        # Check if scenario ended
         if not self.scenario_ended and self.state.isGoalState():
             self.scenario_ended = True
 
@@ -201,89 +284,133 @@ class ScenarioSimulation:
     def time_step(self):
         return self.state.time_step
 
-    def draw_ships(self, ship_statuses):
-        """
-        Draw each ship with its status color, etc. 
-        (Positions won't change until we do a physics_step.)
-        """
-        safety_zone_px = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm)
-
+    def draw_ships(self):
+        # Determine map area
+        map_rect = self.map.get_map_rect()
+        safety_zone_px_x = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm_x)
+        safety_zone_px_y = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm_y)
         for idx, ship in enumerate(self.state.ships):
-            ship_px_x = int(ship.cx_nm * self.map.pixel_per_nm)
-            ship_px_y = int(ship.cy_nm * self.map.pixel_per_nm)
+            ship_px_pos = self.map.nm_position_to_pixels(ship.cx_nm, ship.cy_nm)
 
             status_color_map = {"Green": GREEN, "Orange": ORANGE, "Red": RED}
             color = status_color_map.get(ship.status, GREEN)
+            # Draw safety zone ellipse (stretched if necessary)
+            pygame.draw.ellipse(SCREEN, color, 
+                                (int(ship_px_pos.x - safety_zone_px_x), 
+                                 int(ship_px_pos.y - safety_zone_px_y),
+                                 2 * safety_zone_px_x, 
+                                 2 * safety_zone_px_y), 2)
+            # Draw ship position
+            pygame.draw.circle(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), 5)
 
-            # safety zone circle
-            pygame.draw.circle(SCREEN, color, (ship_px_x, ship_px_y), safety_zone_px, 2)
-            # ship
-            pygame.draw.circle(SCREEN, BLACK, (ship_px_x, ship_px_y), 5)
-
-            # heading line
+            # Draw heading line
             heading_deg = ship.get_heading_from_direction()
             heading_rad = math.radians(heading_deg)
-            line_len = 15
-            tip_x = ship_px_x + line_len * math.cos(heading_rad)
-            tip_y = ship_px_y + line_len * math.sin(heading_rad)
-            pygame.draw.line(SCREEN, BLACK, (ship_px_x, ship_px_y), (tip_x, tip_y), 2)
+            line_len_x = int(15 * math.cos(heading_rad))  # Adjust based on scaling if necessary
+            line_len_y = int(15 * math.sin(heading_rad))
+            tip_x = ship_px_pos.x + line_len_x
+            tip_y = ship_px_pos.y + line_len_y
+            pygame.draw.line(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), (int(tip_x), int(tip_y)), 2)
 
+    def update_window_size(self, window_width, window_height):
+        """
+        Update the map scaling based on the new window size.
+        
+        :param window_width: New window width in pixels.
+        :param window_height: New window height in pixels.
+        """
+        self.map.window_width = window_width
+        self.map.window_height = window_height
+        self.map.update_scaling()
 
 def main_menu():
     """
     Main menu screen with buttons: New Scenario, Load, Exit
     """
+    global WIDTH, HEIGHT, SCREEN, sea_bg, bg_scroll_speed, logo_image, logo_image_raw
+
     def new_scenario_callback():
         new_scenario()
 
-    button_width, button_height = 300, 60
-    button_spacing = 20
-    button_start_y = HEIGHT // 2 - (button_height * 1.5 + button_spacing)
+    # Define button dimensions and positions relative to window size
+    button_width_ratio, button_height_ratio = 0.3, 0.06  # 30% width, 6% height
+    button_spacing_ratio = 0.02  # 2% spacing
+
+    # Calculate button positions to avoid overlapping
+    start_y = 0.4  # Starting y position for the first button
 
     buttons = [
-        Button("New Scenario", WIDTH // 2 - button_width // 2, button_start_y,
-               button_width, button_height, new_scenario_callback),
-        Button("Load Scenario", WIDTH // 2 - button_width // 2,
-               button_start_y + button_height + button_spacing,
-               button_width, button_height, lambda: print("Load Scenario")),
-        Button("Exit", WIDTH // 2 - button_width // 2,
-               button_start_y + 2 * (button_height + button_spacing),
-               button_width, button_height, lambda: pygame.quit()),
+        Button(
+            "New Scenario",
+            rel_x=0.5 - button_width_ratio / 2,
+            rel_y=start_y,
+            rel_width=button_width_ratio,
+            rel_height=button_height_ratio,
+            callback=new_scenario_callback
+        ),
+        Button(
+            "Load Scenario",
+            rel_x=0.5 - button_width_ratio / 2,
+            rel_y=start_y + button_height_ratio + button_spacing_ratio,
+            rel_width=button_width_ratio,
+            rel_height=button_height_ratio,
+            callback=lambda: print("Load Scenario")
+        ),
+        Button(
+            "Exit",
+            rel_x=0.5 - button_width_ratio / 2,
+            rel_y=start_y + 2 * (button_height_ratio + button_spacing_ratio),
+            rel_width=button_width_ratio,
+            rel_height=button_height_ratio,
+            callback=lambda: pygame.quit() or sys.exit()
+        ),
     ]
 
     running = True
     bg_offset_x = 0
-    global bg_scroll_speed
 
     while running:
+        dt = 1 / 60.0  # Not that critical here, but let's define
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
                 pygame.quit()
                 sys.exit()
+            elif event.type == pygame.VIDEORESIZE:
+                # User resized window => update WIDTH/HEIGHT + re-scale
+                WIDTH, HEIGHT = event.w, event.h
+                SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+                scale_images_to_window()
+                # Update all buttons' positions and sizes
+                for button in buttons:
+                    button.update_rect()
+                    button.update_font()
+            else:
+                for button in buttons:
+                    button.check_click(event)
 
-            for button in buttons:
-                button.check_click(event)
+        bg_offset_x = (bg_offset_x + bg_scroll_speed * WIDTH * 0.001) % WIDTH  # Adjust scroll speed based on WIDTH
 
-        # Move the background slightly
-        bg_offset_x = (bg_offset_x + bg_scroll_speed) % WIDTH
+        # Draw background
         SCREEN.blit(sea_bg, (-bg_offset_x, 0))
         SCREEN.blit(sea_bg, (-bg_offset_x + WIDTH, 0))
 
-        # Draw the larger logo
-        logo_rect = logo_image.get_rect(center=(WIDTH // 2, HEIGHT // 4))
-        SCREEN.blit(logo_image, logo_rect)
+        # Center the logo (e.g., top center)
+        logo_rect_center = logo_image.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.2)))
+        SCREEN.blit(logo_image, logo_rect_center)
 
         for button in buttons:
             button.draw(SCREEN)
 
         pygame.display.flip()
 
-
 def new_scenario():
     """
     Screen for defining a new scenario: map size, horizon, safety zone, ships' positions, etc.
     """
+    global WIDTH, HEIGHT, SCREEN, sea_bg
+
     default_values = {
         "map_size": "3",
         "num_ships": "2",
@@ -294,14 +421,15 @@ def new_scenario():
         "max_speed": "20",
     }
 
+    # Define input box relative positions and sizes
     input_boxes = {
-        "map_size": InputBox(400, 100, 200, 30, default_values["map_size"]),
-        "num_ships": InputBox(400, 150, 200, 30, default_values["num_ships"]),
-        "horizon": InputBox(400, 200, 200, 30, default_values["horizon"]),
-        "safety_zone": InputBox(400, 250, 200, 30, default_values["safety_zone"]),
-        "ship_width": InputBox(400, 300, 200, 30, default_values["ship_width"]),
-        "ship_length": InputBox(400, 350, 200, 30, default_values["ship_length"]),
-        "max_speed": InputBox(400, 400, 200, 30, default_values["max_speed"]),
+        "map_size": InputBox(rel_x=0.5 - 0.1, rel_y=0.1, rel_w=0.2, rel_h=0.03, text=default_values["map_size"]),
+        "num_ships": InputBox(rel_x=0.5 - 0.1, rel_y=0.15, rel_w=0.2, rel_h=0.03, text=default_values["num_ships"]),
+        "horizon": InputBox(rel_x=0.5 - 0.1, rel_y=0.2, rel_w=0.2, rel_h=0.03, text=default_values["horizon"]),
+        "safety_zone": InputBox(rel_x=0.5 - 0.1, rel_y=0.25, rel_w=0.2, rel_h=0.03, text=default_values["safety_zone"]),
+        "ship_width": InputBox(rel_x=0.5 - 0.1, rel_y=0.3, rel_w=0.2, rel_h=0.03, text=default_values["ship_width"]),
+        "ship_length": InputBox(rel_x=0.5 - 0.1, rel_y=0.35, rel_w=0.2, rel_h=0.03, text=default_values["ship_length"]),
+        "max_speed": InputBox(rel_x=0.5 - 0.1, rel_y=0.4, rel_w=0.2, rel_h=0.03, text=default_values["max_speed"]),
     }
 
     source_dest_boxes = []
@@ -311,11 +439,21 @@ def new_scenario():
         nonlocal source_dest_boxes
         source_dest_boxes = []
         for i in range(min(num_ships, 8)):
-            source_box = InputBox(250, 500 + i * 60, 150, 30,
-                                  "0,0" if i == 0 else "3,3")
-            dest_box = InputBox(600, 500 + i * 60, 150, 30,
-                                "3,3" if i == 0 else "0,0")
-            source_dest_boxes.append((source_box, dest_box))
+            src_box = InputBox(
+                rel_x=0.3 - 0.075,  # Adjusted to fit within window (centered around 0.3)
+                rel_y=0.5 + i * 0.07,
+                rel_w=0.15,
+                rel_h=0.03,
+                text="0,0" if i == 0 else "3,3"
+            )
+            dest_box = InputBox(
+                rel_x=0.7 - 0.075,  # Adjusted to fit within window (centered around 0.7)
+                rel_y=0.5 + i * 0.07,
+                rel_w=0.15,
+                rel_h=0.03,
+                text="3,3" if i == 0 else "0,0"
+            )
+            source_dest_boxes.append((src_box, dest_box))
 
     update_ship_inputs(current_num_ships)
 
@@ -328,12 +466,21 @@ def new_scenario():
         ]
         start_scenario(inputs)
 
-    submit_button = Button("Start Scenario", 400, 900, 200, 50, collect_inputs)
+    # Define submit button
+    submit_button = Button(
+        "Start Scenario",
+        rel_x=0.5 - 0.1,  # Centered, width 20%
+        rel_y=0.9,
+        rel_width=0.2,
+        rel_height=0.05,
+        callback=collect_inputs
+    )
 
     running = True
     while running:
         SCREEN.fill(WHITE)
 
+        # Render labels
         labels = [
             "Map Size (Nautical Miles):",
             "Number of Ships:",
@@ -344,19 +491,32 @@ def new_scenario():
             "Max Speed (knots):"
         ]
 
+        label_positions = [
+            (0.05, 0.1),
+            (0.05, 0.15),
+            (0.05, 0.2),
+            (0.05, 0.25),
+            (0.05, 0.3),
+            (0.05, 0.35),
+            (0.05, 0.4),
+        ]
+
         for i, label in enumerate(labels):
             label_surface = INPUT_FONT.render(label, True, BLACK)
-            SCREEN.blit(label_surface, (150, 100 + i * 50))
+            label_pos = (int(WIDTH * label_positions[i][0]), int(HEIGHT * label_positions[i][1]))
+            SCREEN.blit(label_surface, label_pos)
             input_boxes[list(input_boxes.keys())[i]].draw(SCREEN)
 
+        # Render source and destination input boxes
         for i, (src_box, dest_box) in enumerate(source_dest_boxes):
             source_label = INPUT_FONT.render(f"Ship {i + 1} Source (NM,NM):", True, BLACK)
             dest_label = INPUT_FONT.render("Destination (NM,NM):", True, BLACK)
-            SCREEN.blit(source_label, (150, 500 + i * 60 - 20))
-            SCREEN.blit(dest_label, (500, 500 + i * 60 - 20))
+            SCREEN.blit(source_label, (int(WIDTH * 0.15), int(HEIGHT * (0.5 + i * 0.07 - 0.02))))
+            SCREEN.blit(dest_label, (int(WIDTH * 0.55), int(HEIGHT * (0.5 + i * 0.07 - 0.02))))
             src_box.draw(SCREEN)
             dest_box.draw(SCREEN)
 
+        # Draw submit button
         submit_button.draw(SCREEN)
 
         for event in pygame.event.get():
@@ -364,16 +524,31 @@ def new_scenario():
                 running = False
                 pygame.quit()
                 sys.exit()
+            elif event.type == pygame.VIDEORESIZE:
+                # User resized => update WIDTH/HEIGHT
+                WIDTH, HEIGHT = event.w, event.h
+                SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+                scale_images_to_window()
+                # Re-position input boxes
+                for box in input_boxes.values():
+                    box.update_rect()
+                    box.update_font()
+                for src_box, dest_box in source_dest_boxes:
+                    src_box.update_rect()
+                    src_box.update_font()
+                    dest_box.update_rect()
+                    dest_box.update_font()
+                submit_button.update_rect()
+                submit_button.update_font()
+            else:
+                for box in input_boxes.values():
+                    box.handle_event(event)
+                for src_box, dest_box in source_dest_boxes:
+                    src_box.handle_event(event)
+                    dest_box.handle_event(event)
+                submit_button.check_click(event)
 
-            for box in input_boxes.values():
-                box.handle_event(event)
-
-            for src_box, dest_box in source_dest_boxes:
-                src_box.handle_event(event)
-                dest_box.handle_event(event)
-
-            submit_button.check_click(event)
-
+        # Update number of ships if changed
         num_ships_text = input_boxes["num_ships"].get_text()
         num_ships = int(num_ships_text) if num_ships_text.isdigit() else 0
         if num_ships != current_num_ships:
@@ -382,16 +557,13 @@ def new_scenario():
 
         pygame.display.flip()
 
-
 def start_scenario(inputs):
-    """
-    Called after user inputs scenario parameters:
-     - Creates a ScenarioSimulation instance and runs its loop
-    """
-    map_size_nm = float(inputs.get("map_size", "100") or "100")
+    global WIDTH, HEIGHT, SCREEN, sea_bg
+
+    map_size_nm = float(inputs.get("map_size", "3") or "3")
     horizon_nm = float(inputs.get("horizon", "2") or "2")
-    safety_zone_m = float(inputs.get("safety_zone", "50") or "50")
-    ship_width_m = float(inputs.get("ship_width", "20") or "20")
+    safety_zone_m = float(inputs.get("safety_zone", "200") or "200")
+    ship_width_m = float(inputs.get("ship_width", "200") or "200")
     ship_length_m = float(inputs.get("ship_length", "200") or "200")
     max_speed_knots = float(inputs.get("max_speed", "10") or "10")
 
@@ -399,59 +571,55 @@ def start_scenario(inputs):
 
     simulation = ScenarioSimulation(
         map_size_nm, horizon_nm, safety_zone_m,
-        ship_width_m, ship_length_m, max_speed_knots, ships_data
+        ship_width_m, ship_length_m, max_speed_knots, ships_data,
+        window_width=WIDTH,
+        window_height=HEIGHT
     )
 
     running = True
     clock = pygame.time.Clock()
-
-    # =============================
-    # ========== NEW ==============
-    # We'll accumulate real time. 
     real_time_accumulator = 0.0
-    # =============================
 
     while running:
-        # get dt in real seconds
-        dt = clock.tick(60) / 1000.0
-
+        dt = clock.tick(60) / 1000.0  # Delta time in seconds
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
                 pygame.quit()
                 sys.exit()
+            elif event.type == pygame.VIDEORESIZE:
+                WIDTH, HEIGHT = event.w, event.h
+                SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+                scale_images_to_window()
+                # Update simulation map scaling
+                simulation.update_window_size(WIDTH, HEIGHT)
 
-        # =============================
-        # ========== NEW ==============
-        # Accumulate real time. Once we exceed REAL_SECONDS_PER_STEP,
-        # do a 30s physics step (PHYSICS_STEP).
+        # Accumulate real time
         real_time_accumulator += dt
         if real_time_accumulator >= REAL_SECONDS_PER_STEP:
             real_time_accumulator -= REAL_SECONDS_PER_STEP
-            # do exactly one 30s step
+            # Do one 30s step
             simulation.physics_step()
-        # =============================
 
-        # Clear background
+        # Draw background (could be a different color or image)
         SCREEN.fill(BLUE)
 
-        # Show time step (count how many big steps we did)
-        time_surface = INPUT_FONT.render(f"Time Step: {simulation.time_step}", True, WHITE)
-        SCREEN.blit(time_surface, (10, 10))
+        # Display simulation time step
+        time_surface = INPUT_FONT.render(f"Sim Time Step: {simulation.time_step}", True, WHITE)
+        SCREEN.blit(time_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.01)))
 
+        # Display scenario status
         if simulation.scenario_ended:
             ended_surface = INPUT_FONT.render("Scenario ended", True, WHITE)
-            SCREEN.blit(ended_surface, (10, 30))
+            SCREEN.blit(ended_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
         else:
             running_surface = INPUT_FONT.render("Scenario Running...", True, WHITE)
-            SCREEN.blit(running_surface, (10, 30))
+            SCREEN.blit(running_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
 
-        # Draw ships. Their positions only update each 30s step,
-        # so you'll see them "jump" every REAL_SECONDS_PER_STEP sec.
-        simulation.draw_ships(ship_statuses=[])  # we pass empty or you can store statuses
+        # Draw ships
+        simulation.draw_ships()
 
         pygame.display.flip()
-
 
 if __name__ == "__main__":
     main_menu()
