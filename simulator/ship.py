@@ -2,7 +2,8 @@ import math
 from simulator.position import Position
 
 class Ship:
-    def __init__(self, ship_id, source_nm_pos, dest_nm_pos, width_m, length_m, max_speed_knots, role="Unknown"):
+    def __init__(self, ship_id, source_nm_pos, dest_nm_pos,
+                 width_m, length_m, max_speed_knots, role="Unknown"):
         self.id = ship_id
         self.source_nm_pos = source_nm_pos
         self.destination_nm_pos = dest_nm_pos
@@ -11,11 +12,15 @@ class Ship:
         self.maxSpeed = max_speed_knots
         self.currentSpeed = max_speed_knots
         self.role = role
-        self.scenario = None  # scenario attribute
+        self.scenario = None
         self.cx_nm = self.source_nm_pos.x
         self.cy_nm = self.source_nm_pos.y
+        self.status = "Green"
 
-        # Calculate initial direction
+        # NEW: indicates if ship is currently in an avoidance maneuver 
+        # (so we won't constantly re-apply starboard turns)
+        self.is_avoiding = False
+
         dx = self.destination_nm_pos.x - self.cx_nm
         dy = self.destination_nm_pos.y - self.cy_nm
         dist_dir = math.sqrt(dx*dx + dy*dy)
@@ -28,10 +33,11 @@ class Ship:
         nm_per_sec = self.currentSpeed / 3600.0
         dx = self.destination_nm_pos.x - self.cx_nm
         dy = self.destination_nm_pos.y - self.cy_nm
-        dist = math.sqrt(dx*dx + dy*dy)
+        dist_to_dest = math.sqrt(dx*dx + dy*dy)
         step_dist = nm_per_sec * delta_seconds
-        if dist > 1e-6:
-            if dist < step_dist:
+
+        if dist_to_dest > 1e-6:
+            if dist_to_dest < step_dist:
                 self.cx_nm = self.destination_nm_pos.x
                 self.cy_nm = self.destination_nm_pos.y
             else:
@@ -39,32 +45,33 @@ class Ship:
                 self.cy_nm += self.direction[1] * step_dist
 
     def reached_destination(self):
-        dist_to_dest = math.sqrt((self.destination_nm_pos.x - self.cx_nm)**2 + (self.destination_nm_pos.y - self.cy_nm)**2)
+        dist_to_dest = math.sqrt(
+            (self.destination_nm_pos.x - self.cx_nm)**2 +
+            (self.destination_nm_pos.y - self.cy_nm)**2
+        )
         return dist_to_dest <= 0.1
 
-    def future_position(self, steps):
+    def future_position(self, future_time_seconds):
         nm_per_sec = self.currentSpeed / 3600.0
-        fx = self.cx_nm + self.direction[0]*nm_per_sec*steps
-        fy = self.cy_nm + self.direction[1]*nm_per_sec*steps
+        step_dist = nm_per_sec * future_time_seconds
+        fx = self.cx_nm + self.direction[0] * step_dist
+        fy = self.cy_nm + self.direction[1] * step_dist
         return Position(fx, fy)
 
     def set_status(self, status):
-        pass
+        self.status = status
 
-    def change_speed(self, speedChange):
-        # speedChange in knots: +10, -10, or 0
-        new_speed = self.currentSpeed + speedChange
+    def change_speed(self, speed_change):
+        new_speed = self.currentSpeed + speed_change
         if new_speed < 0:
             new_speed = 0
         if new_speed > self.maxSpeed:
             new_speed = self.maxSpeed
         self.currentSpeed = new_speed
 
-    def change_heading(self, headingChange):
-        # headingChange in degrees: ±10° or 0°
-        # Convert current direction to heading:
+    def change_heading(self, heading_change):
         current_heading = self.get_heading_from_direction()
-        new_heading = (current_heading + headingChange) % 360
+        new_heading = (current_heading + heading_change) % 360
         self.direction = self.get_direction_from_heading(new_heading)
 
     def get_heading_from_direction(self):

@@ -1,154 +1,288 @@
-# algorithm/search_algorithm.py
-
 import math
-import copy
-from .api import AlgorithmAPI
+from simulator.action import Action
 
-SECONDS_PER_HOUR = 3600.0
+METERS_PER_NM = 1852.0
 
-class SearchAlgorithm(AlgorithmAPI):
-    def detect_future_collision(self, state, horizon_steps, safety_zone_nm):
-        collision_distance_nm = 2 * safety_zone_nm
+class ColregsAlgorithm:
+    """
+    A 2-ship collision-avoidance approach that:
+      - Respects a horizon distance: no checks if distance > horizon.
+      - If collision "Orange" or "Red", we do exactly one COLREGS-based maneuver 
+        and set is_avoiding=True for the relevant ship(s).
+      - If a ship is_avoiding=True, it sticks to that heading/speed 
+        until we detect 'completely safe' for the entire horizon => revert.
+    """
 
-        ship_status = ["Green"] * len(state.ships)
+    def step(self, state, horizon_steps, safety_zone_nm, horizon_nm):
+        """
+        Called each simulation step.
+         - statuses: ["Green","Orange","Red"]
+         - actions: [Action(shipId, headingChange, speedChange), ...]
+        """
+        ships = state.ships
+        n = len(ships)
+        statuses = ["Green"] * n
+        actions = []
 
-        if self.check_collisions(state, ship_status, collision_distance_nm):
-            return ship_status
+        if n < 2:
+            return statuses, actions
 
-        self.simulate_future(state, ship_status, horizon_steps, collision_distance_nm)
-        return ship_status
+        ship_a, ship_b = ships[0], ships[1]
 
-    def check_collisions(self, state, ship_status, collision_dist_nm):
-        red_detected = False
-        for i in range(len(state.ships)):
-            for j in range(i+1, len(state.ships)):
-                dist_nm = self.distance_nm(state.ships[i], state.ships[j])
-                if dist_nm < collision_dist_nm:
-                    ship_status[i] = "Red"
-                    ship_status[j] = "Red"
-                    red_detected = True
-        return red_detected
+        # 1) Evaluate collision status
+        statuses = self.detect_future_collision(
+            ship_a, ship_b, horizon_steps, safety_zone_nm, horizon_nm
+        )
 
-    def simulate_future(self, current_state, ship_status, horizon_steps, collision_dist_nm):
-        collision_info_logged = False
-        future_state = copy.deepcopy(current_state)
+        # 2) For each ship, if it is currently in avoidance mode (ship.is_avoiding):
+        #    we skip applying new turns unless we see that we can revert.
+        #    We'll gather potential "revert" actions if ships appear safe.
+        revert_actions = self.check_if_can_revert(ships, horizon_steps, safety_zone_nm, horizon_nm)
 
-        steps_data = []
-        steps_data.append(self.record_step_data(future_state))
-
-        for fstep in range(1, horizon_steps + 1):
-            future_state.increment_time_step()
-            future_state.update_ships()
-
-            steps_data.append(self.record_step_data(future_state))
-
-            future_red_found = False
-            future_colliding_pairs = []
-            for i in range(len(future_state.ships)):
-                if ship_status[i] == "Red":
-                    continue
-                for j in range(i+1, len(future_state.ships)):
-                    if ship_status[j] == "Red":
-                        continue
-                    dist_nm = self.distance_nm(future_state.ships[i], future_state.ships[j])
-                    if dist_nm < collision_dist_nm:
-                        if ship_status[i] != "Red":
-                            ship_status[i] = "Orange"
-                        if ship_status[j] != "Red":
-                            ship_status[j] = "Orange"
-                        future_red_found = True
-                        future_colliding_pairs.append((i,j))
-
-            if future_red_found and not collision_info_logged:
-                if fstep - 1 >= 0:
-                    prev_step_data = steps_data[fstep - 1]
-                    if future_colliding_pairs:
-                        i, j = future_colliding_pairs[0]
-                        scenario, ship_a_role, ship_b_role = self.classify_and_assign_roles(
-                            prev_step_data, i, j
-                        )
-                        # Assign scenario and roles to the ships in the original state
-                        # Note: Use current_state.ships (the original state's ships)
-                        current_state.ships[i].scenario = scenario
-                        current_state.ships[i].role = ship_a_role
-                        current_state.ships[j].scenario = scenario
-                        current_state.ships[j].role = ship_b_role
-                        print(f"Future collision detected at time step {current_state.time_step}, "
-                              f"future step {fstep}. Scenario: {scenario}, "
-                              f"Ship {i} Role: {ship_a_role}, Ship {j} Role: {ship_b_role}")
-                collision_info_logged = True
-
-    def record_step_data(self, state):
-        ships_data = []
-        for ship in state.ships:
-            heading = self.get_ship_heading_angle(ship)
-            ships_data.append({
-                'pos': (ship.cx_nm, ship.cy_nm),
-                'heading': heading
-            })
-        return ships_data
-
-    def get_ship_heading_angle(self, ship):
-        dx, dy = ship.direction
-        angle_rad = math.atan2(dy, dx)
-        angle_deg = math.degrees(angle_rad)
-        if angle_deg < 0:
-            angle_deg += 360
-        return angle_deg
-
-    def classify_and_assign_roles(self, step_data, i, j):
-        ship_a_heading = step_data[i]['heading']
-        ship_b_heading = step_data[j]['heading']
-        scenario = self.classify_colreg_scenario(ship_a_heading, ship_b_heading)
-
-        ship_a_pos = step_data[i]['pos']
-        ship_b_pos = step_data[j]['pos']
-
-        ship_a_dir = self.heading_to_direction(ship_a_heading)
-        starboard_side_ship = 'A' if self.is_starboard(ship_a_pos, ship_a_dir, ship_b_pos) else 'B'
-
-        ship_a_role, ship_b_role = self.assign_roles(scenario, starboard_side_ship)
-        return scenario, ship_a_role, ship_b_role
-
-    def heading_to_direction(self, heading_deg):
-        rad = math.radians(heading_deg)
-        dx = math.cos(rad)
-        dy = math.sin(rad)
-        return (dx, dy)
-
-    def is_starboard(self, ship_a_pos, ship_a_dir, ship_b_pos):
-        ax, ay = ship_a_pos
-        bx, by = ship_b_pos
-        vector_ab = (bx - ax, by - ay)
-        cross = ship_a_dir[0]*vector_ab[1] - ship_a_dir[1]*vector_ab[0]
-        return cross < 0
-
-    def classify_colreg_scenario(self, ship_a_heading, ship_b_heading):
-        course_diff = abs(ship_a_heading - ship_b_heading) % 360
-        if course_diff > 180:
-            course_diff = 360 - course_diff
-        
-        if course_diff > 150:
-            return "Heading"
-        elif course_diff > 45:
-            return "Crossing"
+        # 3) If revert_actions are not empty, that means we are fully safe.
+        #    We do that instead of collision check logic.
+        if revert_actions:
+            actions.extend(revert_actions)
         else:
-            return "Overtaking"
-
-    def assign_roles(self, scenario, starboard_side_ship):
-        if scenario == "Heading":
-            return ("Give-way", "Give-way")
-        elif scenario == "Crossing":
-            if starboard_side_ship == 'A':
-                return ("Stand-on", "Give-way")
+            # 4) If no revert, and if neither ship is in avoidance mode,
+            #    then we might do a new avoidance maneuver if "Orange"/"Red".
+            #    If a ship is already in avoidance, we do not re-run "resolve_collisions."
+            if (not ship_a.is_avoiding) and (not ship_b.is_avoiding):
+                if "Red" in statuses or "Orange" in statuses:
+                    # produce one-time avoidance action
+                    avoidance_actions = self.resolve_collisions(ships, statuses, safety_zone_nm)
+                    actions.extend(avoidance_actions)
+                    # after we produce them, we'll mark is_avoiding on relevant ships
             else:
-                return ("Give-way", "Stand-on")
-        elif scenario == "Overtaking":
-            return ("Stand-on", "Give-way")
-        else:
-            return ("Stand-on", "Stand-on")
+                # ships are already avoiding => do nothing
+                pass
 
-    def distance_nm(self, ship1, ship2):
-        dx = ship1.cx_nm - ship2.cx_nm
-        dy = ship1.cy_nm - ship2.cy_nm
+        return statuses, actions
+
+    # -----------------------------------------------------------------
+    #             Collision Detection with Horizon Distance
+    # -----------------------------------------------------------------
+
+    def detect_future_collision(self, ship_a, ship_b,
+                                horizon_steps, safety_zone_nm, horizon_nm):
+        """
+        Return ["Green","Red"] or ["Green","Orange"] etc. (for 2 ships).
+        """
+        statuses = ["Green", "Green"]
+        dist_now = self._distance_nm(ship_a.cx_nm, ship_a.cy_nm, ship_b.cx_nm, ship_b.cy_nm)
+
+        # If beyond horizon => no collision checks => "Green"
+        if dist_now > horizon_nm:
+            return statuses
+
+        # If within horizon => check immediate collision
+        min_dist_for_collision = 2 * safety_zone_nm
+        if dist_now < min_dist_for_collision:
+            statuses[0] = "Red"
+            statuses[1] = "Red"
+            return statuses
+
+        # Not Red => check future
+        found_future_collision = False
+        for step_idx in range(1, horizon_steps + 1):
+            future_time_sec = step_idx * 30
+            fpos_a = ship_a.future_position(future_time_sec)
+            fpos_b = ship_b.future_position(future_time_sec)
+            dist_future = self._distance_nm(fpos_a.x, fpos_a.y, fpos_b.x, fpos_b.y)
+            if dist_future < min_dist_for_collision:
+                found_future_collision = True
+                break
+
+        if found_future_collision:
+            statuses[0] = "Orange"
+            statuses[1] = "Orange"
+        else:
+            statuses[0] = "Green"
+            statuses[1] = "Green"
+
+        return statuses
+
+    # -----------------------------------------------------------------
+    #    Resolving Collisions Once (One-Time Maneuver) + Mark Avoiding
+    # -----------------------------------------------------------------
+
+    def resolve_collisions(self, ships, statuses, safety_zone_nm):
+        """
+        Produce avoidance actions if "Red" or "Orange".
+        Then mark those ships as is_avoiding=True.
+        """
+        if len(ships) < 2:
+            return []
+
+        ship_a, ship_b = ships[0], ships[1]
+        actions = []
+
+        # If Red => both starboard + slow
+        if "Red" in statuses:
+            heading_change = 20.0
+            speed_change = -3.0
+            actions.append(Action(0, heading_change, speed_change))
+            actions.append(Action(1, heading_change, speed_change))
+            ship_a.is_avoiding = True
+            ship_b.is_avoiding = True
+            return actions
+
+        # If Orange => we do scenario logic
+        scenario = self._determine_colreg_scenario(ship_a, ship_b)
+        if scenario == "head-on":
+            actions.append(Action(0, 15.0, 0.0))
+            actions.append(Action(1, 15.0, 0.0))
+            ship_a.is_avoiding = True
+            ship_b.is_avoiding = True
+
+        elif scenario == "overtaking":
+            if self._is_overtaking(ship_a, ship_b):
+                actions.append(Action(0, 15.0, 0.0))
+                ship_a.is_avoiding = True
+            else:
+                actions.append(Action(1, 15.0, 0.0))
+                ship_b.is_avoiding = True
+        else:
+            # crossing
+            brg_from_a = self._relative_bearing(ship_a, ship_b)
+            if 0 <= brg_from_a < 180:
+                actions.append(Action(0, 15.0, 0.0))
+                ship_a.is_avoiding = True
+            else:
+                actions.append(Action(1, 15.0, 0.0))
+                ship_b.is_avoiding = True
+
+        return actions
+
+    # -----------------------------------------------------------------
+    #    Reverting to Normal If Safe (for ships that are_avoiding)
+    # -----------------------------------------------------------------
+
+    def check_if_can_revert(self, ships, horizon_steps, safety_zone_nm, horizon_nm):
+        """
+        If ships in avoidance mode are now fully safe => revert to direct heading & speed.
+        'Fully safe' means: 
+         1) they're within horizon distance? If they're beyond horizon, it's safe, too.
+         2) or if they're within horizon, we ensure the entire next horizon steps has no collision.
+
+        We'll do a quick check. If absolutely no future collision => revert them.
+        """
+        if len(ships) < 2:
+            return []
+
+        ship_a, ship_b = ships[0], ships[1]
+        # Only revert if BOTH ships are safe from collisions, 
+        # i.e. "Green" across the entire horizon or distance > horizon.
+        revert_actions = []
+
+        # 1) Check distance now
+        dist_now = self._distance_nm(ship_a.cx_nm, ship_a.cy_nm, ship_b.cx_nm, ship_b.cy_nm)
+        if dist_now > horizon_nm:
+            # If they're beyond horizon, no collision => revert both if they are avoiding
+            if ship_a.is_avoiding or ship_b.is_avoiding:
+                revert_actions.extend(self._revert_ship(0, ship_a))
+                revert_actions.extend(self._revert_ship(1, ship_b))
+            return revert_actions
+
+        # else, within horizon => we do a future check
+        min_dist_for_collision = 2 * safety_zone_nm
+        future_collision_found = False
+        for step_idx in range(1, horizon_steps + 1):
+            future_time_sec = step_idx * 30
+            fpos_a = ship_a.future_position(future_time_sec)
+            fpos_b = ship_b.future_position(future_time_sec)
+            dist_future = self._distance_nm(fpos_a.x, fpos_a.y, fpos_b.x, fpos_b.y)
+            if dist_future < min_dist_for_collision:
+                future_collision_found = True
+                break
+
+        if not future_collision_found:
+            # completely safe => revert if they are avoiding
+            if ship_a.is_avoiding:
+                revert_actions.extend(self._revert_ship(0, ship_a))
+            if ship_b.is_avoiding:
+                revert_actions.extend(self._revert_ship(1, ship_b))
+
+        return revert_actions
+
+    def _revert_ship(self, ship_id, ship):
+        """
+        Returns a list of actions to realign the ship to its direct heading 
+        from current pos->destination, and restore speed to max.
+        Mark ship.is_avoiding=False.
+        """
+        revert_actions = []
+        dx = ship.destination_nm_pos.x - ship.cx_nm
+        dy = ship.destination_nm_pos.y - ship.cy_nm
+        desired_heading = math.degrees(math.atan2(dy, dx)) if abs(dx)+abs(dy)>1e-6 else 0.0
+        if desired_heading < 0:
+            desired_heading += 360
+
+        current_heading = ship.get_heading_from_direction()
+        heading_diff = (desired_heading - current_heading + 180) % 360 - 180
+
+        speed_diff = ship.maxSpeed - ship.currentSpeed
+
+        # If difference is non-negligible, produce an action
+        if abs(heading_diff) > 1e-3 or abs(speed_diff) > 1e-3:
+            revert_actions.append(Action(ship_id, heading_diff, speed_diff))
+
+        # Mark as done avoiding
+        ship.is_avoiding = False
+        return revert_actions
+
+    # -----------------------------------------------------------------
+    #                       COLREG Scenario Logic
+    # -----------------------------------------------------------------
+
+    def _determine_colreg_scenario(self, ship_a, ship_b):
+        heading_a = ship_a.get_heading_from_direction()
+        heading_b = ship_b.get_heading_from_direction()
+        heading_diff = abs((heading_a - heading_b + 180) % 360 - 180)
+
+        rel_brg_a = self._relative_bearing(ship_a, ship_b)
+        # HEAD-ON if ~180° difference & other is roughly in front
+        if heading_diff > 150 and (rel_brg_a < 30 or rel_brg_a > 330):
+            return "head-on"
+
+        # OVERTAKING
+        if self._is_overtaking(ship_a, ship_b):
+            return "overtaking"
+        if self._is_overtaking(ship_b, ship_a):
+            return "overtaking"
+
+        # CROSSING
+        return "crossing"
+
+    def _is_overtaking(self, overtaker, other):
+        heading_o = overtaker.get_heading_from_direction()
+        heading_t = other.get_heading_from_direction()
+        speed_o = overtaker.currentSpeed
+        speed_t = other.currentSpeed
+
+        heading_diff = abs((heading_o - heading_t + 180) % 360 - 180)
+        if heading_diff < 20:
+            rel_brg = self._relative_bearing(overtaker, other)
+            # If other is in front (~0 deg) and overtaker is faster => overtaking
+            if rel_brg < 30 or rel_brg > 330:
+                if speed_o > speed_t:
+                    return True
+        return False
+
+    # -----------------------------------------------------------------
+    #                          Utilities
+    # -----------------------------------------------------------------
+    def _distance_nm(self, x1, y1, x2, y2):
+        dx = x1 - x2
+        dy = y1 - y2
         return math.sqrt(dx*dx + dy*dy)
+
+    def _relative_bearing(self, ship_from, ship_to):
+        heading_from = ship_from.get_heading_from_direction()
+        dx = ship_to.cx_nm - ship_from.cx_nm
+        dy = ship_to.cy_nm - ship_from.cy_nm
+        bearing_abs = math.degrees(math.atan2(dy, dx))
+        if bearing_abs < 0:
+            bearing_abs += 360
+        rel_bearing = (bearing_abs - heading_from) % 360
+        return rel_bearing

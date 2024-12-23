@@ -13,11 +13,10 @@ class State:
     def update_ships(self, delta_seconds=1):
         """
         Update the position of all ships based on a time delta (in seconds).
-        We'll call this with delta_seconds=30.0 for a 30-second step.
+        We'll call this with TIME_STEP_SECONDS (default 30.0).
         """
         for ship in self.ships:
             ship.update_position(delta_seconds)
 
     def increment_time_step(self):
-        # Each increment represents moving forward one discrete step (30s)
         self.time_step += 1

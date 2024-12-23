@@ -1,7 +1,7 @@
 import math
 
 class Position:
-    """A simple class to hold x,y coordinates in pixels."""
+    """A simple class to hold x,y coordinates (in NM for your use)."""
     def __init__(self, x, y):
         self.x = x
         self.y = y
