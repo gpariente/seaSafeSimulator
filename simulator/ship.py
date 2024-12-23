@@ -15,11 +15,16 @@ class Ship:
         self.scenario = None
         self.cx_nm = self.source_nm_pos.x
         self.cy_nm = self.source_nm_pos.y
+
+        # The ship's current "display" status: "Green", "Orange", or "Red"
         self.status = "Green"
 
-        # NEW: indicates if ship is currently in an avoidance maneuver 
-        # (so we won't constantly re-apply starboard turns)
+        # Whether we're currently following an avoidance maneuver
         self.is_avoiding = False
+
+        # Whether we are “in danger” of collision. 
+        # This can differentiate between "danger" (Orange/Red) vs truly safe (Green).
+        self.in_danger = False
 
         dx = self.destination_nm_pos.x - self.cx_nm
         dy = self.destination_nm_pos.y - self.cy_nm
@@ -59,7 +64,16 @@ class Ship:
         return Position(fx, fy)
 
     def set_status(self, status):
+        """
+        This is purely for display. 
+        We'll also set `in_danger = True` if status is Orange or Red, 
+        and `in_danger = False` if status is Green.
+        """
         self.status = status
+        if status in ("Orange", "Red"):
+            self.in_danger = True
+        else:  # "Green"
+            self.in_danger = False
 
     def change_speed(self, speed_change):
         new_speed = self.currentSpeed + speed_change

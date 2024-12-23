@@ -34,10 +34,14 @@ INPUT_FONT = pygame.font.Font(pygame.font.get_default_font(), 20)
 METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
-# Each discrete timestep in real seconds
-TIME_STEP_SECONDS = 1.0
+# =============================
+# ========== NEW ==============
+# Instead of TIME_STEP_SECONDS for each frame,
+# we'll define a "physics" step (30s) and how many real seconds we want it to take on screen.
+PHYSICS_STEP = 10.0          # each collision/physics step is 30 seconds of sim time
+REAL_SECONDS_PER_STEP = 0.5  # each 30s sim step takes 2 real seconds to pass visually
+# =============================
 
-# Images / assets
 logo_image = pygame.image.load("images/logo.png").convert_alpha()
 logo_w, logo_h = logo_image.get_width(), logo_image.get_height()
 logo_image = pygame.transform.scale(logo_image, (logo_w * 2, logo_h * 2))
@@ -117,7 +121,6 @@ class ScenarioSimulation:
     def __init__(self, map_size_nm, horizon_nm, safety_zone_m,
                  ship_width_m, ship_length_m, max_speed_knots, ships_data):
 
-        # Map parameters
         self.map = scenario_map.Map(map_size_nm)
         self.horizon_nm = horizon_nm
         self.safety_zone_m = safety_zone_m
@@ -125,12 +128,11 @@ class ScenarioSimulation:
         self.ship_length_m = ship_length_m
         self.max_speed_knots = max_speed_knots
 
-        # Create ships from user-defined source/dest data
         ships = []
         for i, sd in enumerate(ships_data):
             try:
-                sx_nm, sy_nm = map(float, sd["source"].split(","))
-                dx_nm, dy_nm = map(float, sd["destination"].split(","))
+                sx_nm, sy_nm = map(float, sd["source"].split(","))  
+                dx_nm, dy_nm = map(float, sd["destination"].split(","))  
             except:
                 continue
 
@@ -151,37 +153,21 @@ class ScenarioSimulation:
         self.state = State(time_step=0, ships=ships)
         self.scenario_ended = False
 
-        # Horizon steps => how many 30s steps to look forward
+        # We'll interpret horizon_steps in terms of how many "PHYSICS_STEP" increments. 
         if self.max_speed_knots > 0:
-            steps_per_hour = 3600 / TIME_STEP_SECONDS
+            steps_per_hour = 3600.0 / PHYSICS_STEP  # how many big steps in an hour
             self.horizon_steps = int(horizon_nm * steps_per_hour / max_speed_knots)
         else:
             self.horizon_steps = 0
 
-        # Our COLREGS-based collision avoidance algorithm
         self.search_algorithm = ColregsAlgorithm()
 
-    def step(self, external_actions=None):
+    def physics_step(self):
         """
-        Called each game loop tick:
-         1) Apply external user/AI actions
-         2) Run collision detection & avoidance
-         3) Advance the simulation time by TIME_STEP_SECONDS
-         4) Draw or track statuses
+        Perform exactly one PHYSICS_STEP of simulation time:
+          1) collision detection => actions
+          2) move ships by PHYSICS_STEP
         """
-        if external_actions is None:
-            external_actions = []
-
-        # 1) Apply external actions (e.g., manual controls)
-        for action in external_actions:
-            if 0 <= action.shipId < len(self.state.ships):
-                ship = self.state.ships[action.shipId]
-                if abs(action.headingChange) > 1e-6:
-                    ship.change_heading(action.headingChange)
-                if abs(action.speedChange) > 1e-6:
-                    ship.change_speed(action.speedChange)
-
-        # 2) Algorithm: collision detection + (possibly) avoidance or revert
         safety_zone_nm = self.safety_zone_m / METERS_PER_NM
         statuses, auto_actions = self.search_algorithm.step(
             self.state,
@@ -203,15 +189,13 @@ class ScenarioSimulation:
         for i, status in enumerate(statuses):
             self.state.ships[i].set_status(status)
 
-        # 3) Advance simulation time
+        # Now jump forward PHYSICS_STEP in sim time
         self.state.increment_time_step()
-        self.state.update_ships(delta_seconds=TIME_STEP_SECONDS)
+        self.state.update_ships(delta_seconds=PHYSICS_STEP)
 
-        # Check if scenario ended (all ships at destinations)
+        # Check if scenario ended
         if not self.scenario_ended and self.state.isGoalState():
             self.scenario_ended = True
-
-        return statuses, self.scenario_ended
 
     @property
     def time_step(self):
@@ -219,29 +203,24 @@ class ScenarioSimulation:
 
     def draw_ships(self, ship_statuses):
         """
-        Draw each ship:
-         - Safety zone circle (color-coded by status)
-         - A small black circle for the ship
-         - A short line showing the heading
+        Draw each ship with its status color, etc. 
+        (Positions won't change until we do a physics_step.)
         """
         safety_zone_px = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm)
 
         for idx, ship in enumerate(self.state.ships):
-            # Convert ship NM coordinates to screen pixels
             ship_px_x = int(ship.cx_nm * self.map.pixel_per_nm)
             ship_px_y = int(ship.cy_nm * self.map.pixel_per_nm)
 
-            # Pick color by status
             status_color_map = {"Green": GREEN, "Orange": ORANGE, "Red": RED}
             color = status_color_map.get(ship.status, GREEN)
 
-            # Draw the safety zone circle
+            # safety zone circle
             pygame.draw.circle(SCREEN, color, (ship_px_x, ship_px_y), safety_zone_px, 2)
-
-            # Draw the ship itself (small circle)
+            # ship
             pygame.draw.circle(SCREEN, BLACK, (ship_px_x, ship_px_y), 5)
 
-            # Draw heading line
+            # heading line
             heading_deg = ship.get_heading_from_direction()
             heading_rad = math.radians(heading_deg)
             line_len = 15
@@ -328,13 +307,10 @@ def new_scenario():
     source_dest_boxes = []
     current_num_ships = int(default_values["num_ships"])
 
-    # Dynamically update source/dest input boxes
     def update_ship_inputs(num_ships):
         nonlocal source_dest_boxes
         source_dest_boxes = []
         for i in range(min(num_ships, 8)):
-            # Example default positions: first ship from (0,0) to (3,3)
-            # second from (3,3) to (0,0), etc.
             source_box = InputBox(250, 500 + i * 60, 150, 30,
                                   "0,0" if i == 0 else "3,3")
             dest_box = InputBox(600, 500 + i * 60, 150, 30,
@@ -368,13 +344,11 @@ def new_scenario():
             "Max Speed (knots):"
         ]
 
-        # Draw each label + input box
         for i, label in enumerate(labels):
             label_surface = INPUT_FONT.render(label, True, BLACK)
             SCREEN.blit(label_surface, (150, 100 + i * 50))
             input_boxes[list(input_boxes.keys())[i]].draw(SCREEN)
 
-        # Draw source/dest for each ship
         for i, (src_box, dest_box) in enumerate(source_dest_boxes):
             source_label = INPUT_FONT.render(f"Ship {i + 1} Source (NM,NM):", True, BLACK)
             dest_label = INPUT_FONT.render("Destination (NM,NM):", True, BLACK)
@@ -383,17 +357,14 @@ def new_scenario():
             src_box.draw(SCREEN)
             dest_box.draw(SCREEN)
 
-        # Draw submit button
         submit_button.draw(SCREEN)
 
-        # Event handling
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
                 pygame.quit()
                 sys.exit()
 
-            # Update text in each input box
             for box in input_boxes.values():
                 box.handle_event(event)
 
@@ -403,7 +374,6 @@ def new_scenario():
 
             submit_button.check_click(event)
 
-        # If user changes "num_ships" text
         num_ships_text = input_boxes["num_ships"].get_text()
         num_ships = int(num_ships_text) if num_ships_text.isdigit() else 0
         if num_ships != current_num_ships:
@@ -427,7 +397,6 @@ def start_scenario(inputs):
 
     ships_data = inputs.get("source_dest", [])
 
-    # Create the scenario simulation
     simulation = ScenarioSimulation(
         map_size_nm, horizon_nm, safety_zone_m,
         ship_width_m, ship_length_m, max_speed_knots, ships_data
@@ -436,8 +405,15 @@ def start_scenario(inputs):
     running = True
     clock = pygame.time.Clock()
 
+    # =============================
+    # ========== NEW ==============
+    # We'll accumulate real time. 
+    real_time_accumulator = 0.0
+    # =============================
+
     while running:
-        clock.tick(60)  # 60 FPS
+        # get dt in real seconds
+        dt = clock.tick(60) / 1000.0
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -445,27 +421,34 @@ def start_scenario(inputs):
                 pygame.quit()
                 sys.exit()
 
-        # We call step() each frame. If you wanted external actions, 
-        # you'd pass them here.
-        ship_status, done = simulation.step(external_actions=[])
+        # =============================
+        # ========== NEW ==============
+        # Accumulate real time. Once we exceed REAL_SECONDS_PER_STEP,
+        # do a 30s physics step (PHYSICS_STEP).
+        real_time_accumulator += dt
+        if real_time_accumulator >= REAL_SECONDS_PER_STEP:
+            real_time_accumulator -= REAL_SECONDS_PER_STEP
+            # do exactly one 30s step
+            simulation.physics_step()
+        # =============================
 
         # Clear background
         SCREEN.fill(BLUE)
 
-        # Show time step
+        # Show time step (count how many big steps we did)
         time_surface = INPUT_FONT.render(f"Time Step: {simulation.time_step}", True, WHITE)
         SCREEN.blit(time_surface, (10, 10))
 
-        # Show scenario ended or running
-        if done:
+        if simulation.scenario_ended:
             ended_surface = INPUT_FONT.render("Scenario ended", True, WHITE)
             SCREEN.blit(ended_surface, (10, 30))
         else:
             running_surface = INPUT_FONT.render("Scenario Running...", True, WHITE)
             SCREEN.blit(running_surface, (10, 30))
 
-        # Draw ships, statuses, etc.
-        simulation.draw_ships(ship_status)
+        # Draw ships. Their positions only update each 30s step,
+        # so you'll see them "jump" every REAL_SECONDS_PER_STEP sec.
+        simulation.draw_ships(ship_statuses=[])  # we pass empty or you can store statuses
 
         pygame.display.flip()
 
