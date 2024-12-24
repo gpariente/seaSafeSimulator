@@ -48,7 +48,7 @@ INPUT_FONT = get_dynamic_font(0.02)    # 2% of min dimension
 METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
-PHYSICS_STEP = 30.0          # each collision/logic step = 30s sim time
+PHYSICS_STEP = 15.0          # each collision/logic step = 30s sim time
 REAL_SECONDS_PER_STEP = 0.5  # after 2 real seconds, we do a 30s step
 
 # Initialize sea_bg and logo_image
@@ -289,6 +289,7 @@ class ScenarioSimulation:
         map_rect = self.map.get_map_rect()
         safety_zone_px_x = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm_x)
         safety_zone_px_y = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm_y)
+
         for idx, ship in enumerate(self.state.ships):
             ship_px_pos = self.map.nm_position_to_pixels(ship.cx_nm, ship.cy_nm)
 
@@ -297,9 +298,9 @@ class ScenarioSimulation:
             # Draw safety zone ellipse (stretched if necessary)
             pygame.draw.ellipse(SCREEN, color, 
                                 (int(ship_px_pos.x - safety_zone_px_x), 
-                                 int(ship_px_pos.y - safety_zone_px_y),
-                                 2 * safety_zone_px_x, 
-                                 2 * safety_zone_px_y), 2)
+                                int(ship_px_pos.y - safety_zone_px_y),
+                                2 * safety_zone_px_x, 
+                                2 * safety_zone_px_y), 2)
             # Draw ship position
             pygame.draw.circle(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), 5)
 
@@ -311,6 +312,42 @@ class ScenarioSimulation:
             tip_x = ship_px_pos.x + line_len_x
             tip_y = ship_px_pos.y + line_len_y
             pygame.draw.line(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), (int(tip_x), int(tip_y)), 2)
+
+            # If status is Orange or Red => show label with scenario/role
+            if ship.status in ("Orange", "Red") and ship.scenario is not None and ship.role is not None:
+                label_font = INPUT_FONT
+                scenario_text = f"Scenario: {ship.scenario}"
+                role_text = f"Role: {ship.role}"
+                # heading_text = f"Heading: {int(heading_deg)}°"
+
+                # Render them line by line
+                scenario_surf = label_font.render(scenario_text, True, WHITE)
+                role_surf = label_font.render(role_text, True, WHITE)
+                # head_surf = label_font.render(heading_text, True, WHITE)
+
+                # Calculate label position with offset to prevent overlapping
+                label_x = int(ship_px_pos.x)
+                label_y = int(ship_px_pos.y + 10 + idx * 20)  # Offset based on ship index
+
+                # Draw background box
+                max_width = max(scenario_surf.get_width(), role_surf.get_width())
+                total_height = scenario_surf.get_height() + role_surf.get_height()
+                box_rect = pygame.Rect(label_x, label_y, max_width + 6, total_height + 6)
+
+                # Center the box horizontally around the ship
+                box_rect.centerx = label_x
+                # Adjust y position to prevent overlapping
+                box_rect.y = label_y + idx * 20
+
+                pygame.draw.rect(SCREEN, BLACK, box_rect)
+                # Blit each line
+                line_y = box_rect.y + 2
+                SCREEN.blit(scenario_surf, (box_rect.x + 3, line_y))
+                line_y += scenario_surf.get_height()
+                SCREEN.blit(role_surf, (box_rect.x + 3, line_y))
+                line_y += role_surf.get_height()
+                # SCREEN.blit(head_surf, (box_rect.x + 3, line_y))
+
 
     def update_window_size(self, window_width, window_height):
         """
