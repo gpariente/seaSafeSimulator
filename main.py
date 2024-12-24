@@ -20,8 +20,8 @@ DEFAULT_WIDTH, DEFAULT_HEIGHT = 1000, 1000  # default fallback
 # 2) After we get the display info, we'll override these with a fraction of user's screen
 infoObject = pygame.display.Info()
 # For example, let's do 80% of user’s screen resolution
-WIDTH = int(infoObject.current_w * 0.8)
-HEIGHT = int(infoObject.current_h * 0.8)
+WIDTH = int(infoObject.current_w * 0.4)
+HEIGHT = int(infoObject.current_h * 0.7)
 
 # We'll create a resizable window
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
@@ -49,7 +49,7 @@ METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
 PHYSICS_STEP = 30.0          # each collision/logic step = 30s sim time
-REAL_SECONDS_PER_STEP = 2.0  # after 2 real seconds, we do a 30s step
+REAL_SECONDS_PER_STEP = 0.5  # after 2 real seconds, we do a 30s step
 
 # Initialize sea_bg and logo_image
 sea_bg = None
