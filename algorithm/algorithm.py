@@ -1,9 +1,10 @@
 import math
 from simulator.action import Action
+from algorithm.api import CollisionAvoidanceAlgorithm 
 
 METERS_PER_NM = 1852.0
 
-class ColregsAlgorithm:
+class ColregsAlgorithm(CollisionAvoidanceAlgorithm):
     """
     Updated approach:
       - Once we detect a collision scenario => set statuses to Orange/Red for both ships
@@ -20,64 +21,88 @@ class ColregsAlgorithm:
         statuses = ["Green"] * n
         actions = []
 
+        # Quick exit if <2 ships
         if n < 2:
             return statuses, actions
 
         ship_a, ship_b = ships[0], ships[1]
 
-        # 1) Check collision status but do not immediately revert to Green 
-        #    if either ship.in_danger is True. We'll let them remain "Orange"/"Red" 
-        #    until we confirm they can revert.
-
-        # If both ships are not in_danger => we run normal detection
-        # If either is in_danger => we check if we can revert or must remain in danger.
+        # 1) If not in danger => do normal horizon check
+        #    If either in danger => check if we can revert to Green fully
         if not (ship_a.in_danger or ship_b.in_danger):
-            # They appear "safe" from previous perspective => run normal horizon check
             statuses = self.detect_future_collision(
                 ship_a, ship_b, horizon_steps, safety_zone_nm, horizon_nm
             )
         else:
-            # They were in danger => check if we can fully revert to Green
-            # If we can't, keep them in Orange/Red
             statuses = self.detect_future_collision(
                 ship_a, ship_b, horizon_steps, safety_zone_nm, horizon_nm
             )
-            # If detect_future_collision gives "Green", we must verify 
-            # the entire horizon is collision-free => only then revert.
-            # Otherwise remain Orange/Red
-            if statuses == ["Green","Green"]:
-                # Double-check entire horizon is safe
+            if statuses == ["Green", "Green"]:
+                # Double check entire horizon is safe
                 can_revert = self._check_future_safety(ship_a, ship_b, horizon_steps, safety_zone_nm, horizon_nm)
                 if not can_revert:
-                    # Force them to remain Orange
-                    statuses = ["Orange","Orange"]
-                else:
-                    # They truly can revert to Green
-                    statuses = ["Green","Green"]
+                    statuses = ["Orange", "Orange"]
+                # else, truly revert to green
 
-        # 2) Based on statuses: if Red/Orange => do avoidance if needed, 
-        #    or keep them in the same heading if is_avoiding is True.
-        #    If Green => possibly revert to direct heading if is_avoiding was True.
-
-        # Apply statuses to ships for display
+        # 2) Assign statuses temporarily (so we can see "Red" or "Orange" etc.)
         for i, st in enumerate(statuses):
             ships[i].set_status(st)
 
-        # If Red => immediate collision => produce starboard turn if not avoiding
+        # 3) If collision -> classify scenario & roles
         if "Red" in statuses:
+            scenario = self._determine_colreg_scenario(ship_a, ship_b)
+            ship_a.scenario = scenario
+            ship_b.scenario = scenario
+            self._assign_roles(ship_a, ship_b, scenario)
+
             self._handle_red(ships, actions)
+
         elif "Orange" in statuses:
+            scenario = self._determine_colreg_scenario(ship_a, ship_b)
+            ship_a.scenario = scenario
+            ship_b.scenario = scenario
+            self._assign_roles(ship_a, ship_b, scenario)
+
             self._handle_orange(ships, actions)
+
         else:
-            # "Green"
-            # If they are is_avoiding, revert them to normal heading
+            # "Green" => revert if needed
             for i, ship in enumerate(ships):
                 if ship.is_avoiding:
-                    # revert
                     revert_actions = self._revert_ship(i, ship)
                     actions.extend(revert_actions)
 
         return statuses, actions
+    
+    def _assign_roles(self, ship_a, ship_b, scenario):
+        """
+        Set roles for each ship given the scenario:
+          'head-on' => both give-way
+          'overtaking' => overtaker is give-way, other is stand-on
+          'crossing' => the vessel which has the other on her starboard side is give-way
+        """
+        if scenario == "head-on":
+            ship_a.role = "Give-way"
+            ship_b.role = "Give-way"
+
+        elif scenario == "overtaking":
+            if self._is_overtaking(ship_a, ship_b):
+                ship_a.role = "Give-way"
+                ship_b.role = "Stand-on"
+            else:
+                ship_b.role = "Give-way"
+                ship_a.role = "Stand-on"
+
+        else:  # "crossing"
+            brg_a = self._relative_bearing(ship_a, ship_b)
+            # if ship_b is on the starboard side of ship_a => ship_a is give-way
+            # we interpret "0 <= brg_a < 180" as "b is to my front hemisphere"
+            if 0 <= brg_a < 180:
+                ship_a.role = "Give-way"
+                ship_b.role = "Stand-on"
+            else:
+                ship_b.role = "Give-way"
+                ship_a.role = "Stand-on"
 
     # -----------------------------------------------------------------
     #                      Collision Detection

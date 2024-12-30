@@ -214,7 +214,7 @@ class ScenarioSimulation:
     """
     def __init__(self, map_size_nm, horizon_nm, safety_zone_m,
                  ship_width_m, ship_length_m, max_speed_knots, ships_data,
-                 window_width, window_height):
+                 window_width, window_height, collision_algorithm=None):
 
         self.map = scenario_map.Map(map_size_nm, window_width, window_height)
         self.horizon_nm = horizon_nm
@@ -253,7 +253,10 @@ class ScenarioSimulation:
         else:
             self.horizon_steps = 0
 
-        self.search_algorithm = ColregsAlgorithm()
+        if collision_algorithm is None:
+            self.search_algorithm = ColregsAlgorithm()  # default
+        else:
+            self.search_algorithm = collision_algorithm  # user-supplied
 
     def physics_step(self):
         safety_zone_nm = self.safety_zone_m / METERS_PER_NM
