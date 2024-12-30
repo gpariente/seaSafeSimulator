@@ -129,8 +129,10 @@ class ColregsAlgorithm(CollisionAvoidanceAlgorithm):
 
         # Not red => check future
         future_collision = False
-        for step_idx in range(1, horizon_steps+1):
-            future_time_sec = step_idx*30
+        if dist_now < min_dist_for_collision:
+            return ["Red", "Red"]
+        for step_idx in range(0, horizon_steps+1):
+            future_time_sec = step_idx * 15 # NEED TO IMPORT PHYSICS STEP
             fa = ship_a.future_position(future_time_sec)
             fb = ship_b.future_position(future_time_sec)
             dist_f = self._distance_nm(fa.x, fa.y, fb.x, fb.y)
@@ -151,9 +153,9 @@ class ColregsAlgorithm(CollisionAvoidanceAlgorithm):
         if dist_now > horizon_nm:
             return True  # beyond horizon => safe
 
-        min_dist_for_collision = 2*safety_zone_nm
-        for step_idx in range(1, horizon_steps+1):
-            future_time_sec = step_idx * 30
+        min_dist_for_collision = 2 * safety_zone_nm
+        for step_idx in range(0, horizon_steps + 1):
+            future_time_sec = step_idx * 15
             fa = ship_a.future_position(future_time_sec)
             fb = ship_b.future_position(future_time_sec)
             dist_f = self._distance_nm(fa.x, fa.y, fb.x, fb.y)

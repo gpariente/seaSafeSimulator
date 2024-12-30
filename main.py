@@ -259,6 +259,9 @@ class ScenarioSimulation:
             self.search_algorithm = collision_algorithm  # user-supplied
 
     def physics_step(self):
+        # Update ships based on prev step heading/speed.
+        self.state.update_ships(delta_seconds=PHYSICS_STEP)
+        # Collision detection
         safety_zone_nm = self.safety_zone_m / METERS_PER_NM
         statuses, auto_actions = self.search_algorithm.step(
             self.state,
@@ -266,6 +269,7 @@ class ScenarioSimulation:
             safety_zone_nm=safety_zone_nm,
             horizon_nm=self.horizon_nm
         )
+        # Apply avoidance
         for action in auto_actions:
             if 0 <= action.shipId < len(self.state.ships):
                 shp = self.state.ships[action.shipId]
@@ -278,7 +282,7 @@ class ScenarioSimulation:
             self.state.ships[i].set_status(st)
 
         self.state.increment_time_step()
-        self.state.update_ships(delta_seconds=PHYSICS_STEP)
+        
 
         if not self.scenario_ended and self.state.isGoalState():
             self.scenario_ended = True
