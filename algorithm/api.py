@@ -1,17 +1,10 @@
-# algorithm/api.py
+# file: algorithm/base.py
+from abc import ABC, abstractmethod
 
-class AlgorithmAPI:
-    """
-    A generic algorithm interface for collision detection and future prediction.
-    This interface can be implemented by different algorithm classes.
-    """
-    def detect_future_collision(self, state, horizon_steps, safety_zone_nm):
+class CollisionAvoidanceAlgorithm(ABC):
+    @abstractmethod
+    def step(self, state, horizon_steps, safety_zone_nm, horizon_nm):
         """
-        Detect future collisions within the given horizon.
-
-        :param state: The current simulation state (includes ships, time step, etc.)
-        :param horizon_steps: How many future steps (seconds) to check for collisions.
-        :param safety_zone_nm: The safety zone radius in nautical miles.
-        :return: A list of statuses corresponding to each ship ('Green', 'Orange', or 'Red').
+        Must return: statuses (list of ship statuses) and actions (list of Action objects).
         """
-        raise NotImplementedError("This method should be implemented by subclasses.")
+        pass
