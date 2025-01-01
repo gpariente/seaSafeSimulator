@@ -3,7 +3,7 @@ from simulator.ship import Ship
 class State:
     """Represents a discrete time step state in the simulation."""
     def __init__(self, time_step, ships):
-        self.time_step = time_step
+        self.time_step = 0
         self.ships = ships  # List of Ship objects
 
     def isGoalState(self):
@@ -20,3 +20,25 @@ class State:
 
     def increment_time_step(self):
         self.time_step += 1
+
+
+    def get_observation(self):
+        """
+        Returns a dictionary representing the observation (global view in this case).
+        """
+        observation = {
+            "ships": [],
+            "time_step": self.time_step
+        }
+        for ship in self.ships:
+            observation["ships"].append({
+                "id": ship.id,
+                "position": (ship.cx_nm, ship.cy_nm),
+                "heading": ship.get_heading_from_direction(),
+                "speed": ship.currentSpeed,
+                "status": ship.status,
+                "destination": (ship.destination_nm_pos.x, ship.destination_nm_pos.y), 
+                "role": ship.role,  
+                "scenario": ship.scenario,
+            })
+        return observation

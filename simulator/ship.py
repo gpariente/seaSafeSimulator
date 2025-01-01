@@ -64,16 +64,16 @@ class Ship:
         return Position(fx, fy)
 
     def set_status(self, status):
-        """
-        This is purely for display. 
-        We'll also set `in_danger = True` if status is Orange or Red, 
-        and `in_danger = False` if status is Green.
-        """
-        self.status = status
-        if status in ("Orange", "Red"):
-            self.in_danger = True
-        else:  # "Green"
-            self.in_danger = False
+            """
+            This is purely for display. 
+            We'll also set `in_danger = True` if status is Orange or Red, 
+            and `in_danger = False` if status is Green.
+            """
+            self.status = status
+            if status in ("Orange", "Red"):
+                self.in_danger = True
+            else:  # "Green"
+                self.in_danger = False
 
     def change_speed(self, speed_change):
         new_speed = self.currentSpeed + speed_change

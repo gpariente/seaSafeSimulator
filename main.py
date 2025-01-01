@@ -8,7 +8,9 @@ from simulator.ship import Ship
 from simulator.state import State
 from simulator.position import Position
 from simulator.action import Action
-from algorithm.algorithm import ColregsAlgorithm
+from algorithm.algorithm import ColregsAlgorithm  # You might want to remove this later
+from algorithm.tree_search import TreeSearchAlgorithm  # Import the new algorithm
+# from action_space import ShipActionSpace
 
 pygame.init()
 
@@ -214,7 +216,7 @@ class ScenarioSimulation:
     """
     def __init__(self, map_size_nm, horizon_nm, safety_zone_m,
                  ship_width_m, ship_length_m, max_speed_knots, ships_data,
-                 window_width, window_height, collision_algorithm=None):
+                 window_width, window_height, physics_step, collision_algorithm=None):
 
         self.map = scenario_map.Map(map_size_nm, window_width, window_height)
         self.horizon_nm = horizon_nm
@@ -245,51 +247,77 @@ class ScenarioSimulation:
             ships.append(ship)
 
         self.state = State(time_step=0, ships=ships)
+        self.num_ships = len(ships)
+        self.action_space = Action(max_course_change=15, num_ships=self.num_ships)
+        
+        
+        self.physics_step = physics_step
+        self.search_algorithm = TreeSearchAlgorithm(self.action_space, self.physics_step, self.state.get_observation())
+        self.horizon_nm = horizon_nm
+        self.max_speed_knots = max_speed_knots
+        self.safety_zone_m = safety_zone_m
+        
         self.scenario_ended = False
 
-        if self.max_speed_knots > 0:
-            steps_per_hour = 3600.0 / PHYSICS_STEP
-            self.horizon_steps = int(horizon_nm * steps_per_hour / max_speed_knots)
-        else:
-            self.horizon_steps = 0
+        # if self.max_speed_knots > 0:
+        #     steps_per_hour = 3600.0 / PHYSICS_STEP
+        #     self.horizon_steps = int(horizon_nm * steps_per_hour / max_speed_knots)
+        # else:
+        #     self.horizon_steps = 0
 
-        if collision_algorithm is None:
-            self.search_algorithm = ColregsAlgorithm()  # default
-        else:
-            self.search_algorithm = collision_algorithm  # user-supplied
 
-    def physics_step(self):
-        # Update ships based on prev step heading/speed.
-        self.state.update_ships(delta_seconds=PHYSICS_STEP)
-        # Collision detection
-        safety_zone_nm = self.safety_zone_m / METERS_PER_NM
-        statuses, auto_actions = self.search_algorithm.step(
-            self.state,
-            horizon_steps=self.horizon_steps,
-            safety_zone_nm=safety_zone_nm,
-            horizon_nm=self.horizon_nm
-        )
-        # Apply avoidance
-        for action in auto_actions:
-            if 0 <= action.shipId < len(self.state.ships):
-                shp = self.state.ships[action.shipId]
-                if abs(action.headingChange) > 1e-6:
-                    shp.change_heading(action.headingChange)
-                if abs(action.speedChange) > 1e-6:
-                    shp.change_speed(action.speedChange)
+    def update_simulation_state(self):
+                # Get the observation from the state
+                observation = self.state.get_observation()
+                observation["safety_zone_m"] = self.safety_zone_m
+                observation["horizon_nm"] = self.horizon_nm
+                observation["physics_step"] = self.physics_step
+                self.horizon_steps = self.calculate_horizon_steps(self.max_speed_knots, self.horizon_nm, self.physics_step)
+                observation["horizon_steps"] = self.horizon_steps
+                print(f"Horzion steps: {self.horizon_steps}")
+                
+                actions_indices = self.search_algorithm.choose_action(observation)
 
-        for i, st in enumerate(statuses):
-            self.state.ships[i].set_status(st)
+                # Decode and apply actions
+                for i, ship in enumerate(self.state.ships):
+                    speed_change, heading_change = self.action_space.decode_action(actions_indices[i], ship)
+                    ship.change_speed(speed_change)
+                    ship.change_heading(heading_change)
+                    
+                # Update ship positions
+                self.state.update_ships(delta_seconds=self.physics_step)
 
-        self.state.increment_time_step()
-        
+  
+                
+                statuses, scenarios, roles = self.search_algorithm.step(observation, self.state.ships)
 
-        if not self.scenario_ended and self.state.isGoalState():
-            self.scenario_ended = True
+                # Update ship statuses only once based on detected collisions
+                for i, ship in enumerate(self.state.ships):
+                    ship.scenario = scenarios[i]
+                    ship.role = roles[i]
+                    ship.set_status(statuses[i])
+
+                # Check if scenario has ended
+                if not self.scenario_ended and self.state.isGoalState():
+                    self.scenario_ended = True
+                    
+                # Increment time step
+                self.state.increment_time_step()  
 
     @property
     def time_step(self):
         return self.state.time_step
+    
+    
+    def calculate_horizon_steps(self, max_speed_knots, horizon_nm, physics_step):
+        """
+        Calculates the number of steps to reach the horizon based on max speed, horizon distance, and physics step.
+        """
+        if max_speed_knots > 0:
+            max_speed_nm_per_step = max_speed_knots * (physics_step / 3600.0)  # Convert knots to nm/step
+            return int(math.ceil(horizon_nm / max_speed_nm_per_step))
+        else:
+            return 0
 
     def draw_ships(self):
         # Determine map area
@@ -301,6 +329,7 @@ class ScenarioSimulation:
             ship_px_pos = self.map.nm_position_to_pixels(ship.cx_nm, ship.cy_nm)
 
             status_color_map = {"Green": GREEN, "Orange": ORANGE, "Red": RED}
+            print(f"Timestep: {self.time_step}, Ship {idx} status: {ship.status}")
             color = status_color_map.get(ship.status, GREEN)
             # Draw safety zone ellipse (stretched if necessary)
             pygame.draw.ellipse(SCREEN, color, 
@@ -610,6 +639,8 @@ def start_scenario(inputs):
     ship_width_m = float(inputs.get("ship_width", "200") or "200")
     ship_length_m = float(inputs.get("ship_length", "200") or "200")
     max_speed_knots = float(inputs.get("max_speed", "10") or "10")
+    
+    
 
     ships_data = inputs.get("source_dest", [])
 
@@ -617,53 +648,58 @@ def start_scenario(inputs):
         map_size_nm, horizon_nm, safety_zone_m,
         ship_width_m, ship_length_m, max_speed_knots, ships_data,
         window_width=WIDTH,
-        window_height=HEIGHT
+        window_height=HEIGHT,
+        physics_step=PHYSICS_STEP
     )
+    
+
 
     running = True
     clock = pygame.time.Clock()
     real_time_accumulator = 0.0
 
     while running:
-        dt = clock.tick(60) / 1000.0  # Delta time in seconds
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-                pygame.quit()
-                sys.exit()
-            elif event.type == pygame.VIDEORESIZE:
-                WIDTH, HEIGHT = event.w, event.h
-                SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-                scale_images_to_window()
-                # Update simulation map scaling
-                simulation.update_window_size(WIDTH, HEIGHT)
+            dt = clock.tick(60) / 1000.0  # Delta time in seconds
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                    pygame.quit()
+                    sys.exit()
+                elif event.type == pygame.VIDEORESIZE:
+                    WIDTH, HEIGHT = event.w, event.h
+                    SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+                    scale_images_to_window()
+                    # Update simulation map scaling
+                    simulation.update_window_size(WIDTH, HEIGHT)
 
-        # Accumulate real time
-        real_time_accumulator += dt
-        if real_time_accumulator >= REAL_SECONDS_PER_STEP:
-            real_time_accumulator -= REAL_SECONDS_PER_STEP
-            # Do one 30s step
-            simulation.physics_step()
+            # Accumulate real time
+            real_time_accumulator += dt
+            if real_time_accumulator >= REAL_SECONDS_PER_STEP:
+                real_time_accumulator -= REAL_SECONDS_PER_STEP
 
-        # Draw background (could be a different color or image)
-        SCREEN.fill(BLUE)
+                # Do one physics step
+                
+                # Draw background (could be a different color or image)
+                SCREEN.fill(BLUE)
 
-        # Display simulation time step
-        time_surface = INPUT_FONT.render(f"Sim Time Step: {simulation.time_step}", True, WHITE)
-        SCREEN.blit(time_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.01)))
+                # Display simulation time step
+                time_surface = INPUT_FONT.render(f"Sim Time Step: {simulation.time_step}", True, WHITE)
+                SCREEN.blit(time_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.01)))
 
-        # Display scenario status
-        if simulation.scenario_ended:
-            ended_surface = INPUT_FONT.render("Scenario ended", True, WHITE)
-            SCREEN.blit(ended_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
-        else:
-            running_surface = INPUT_FONT.render("Scenario Running...", True, WHITE)
-            SCREEN.blit(running_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
+                # Display scenario status
+                if simulation.scenario_ended:
+                    ended_surface = INPUT_FONT.render("Scenario ended", True, WHITE)
+                    SCREEN.blit(ended_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
+                else:
+                    running_surface = INPUT_FONT.render("Scenario Running...", True, WHITE)
+                    SCREEN.blit(running_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
 
-        # Draw ships
-        simulation.draw_ships()
+                # Draw ships (only once per time step)
+                
+                simulation.draw_ships()
+                simulation.update_simulation_state()
 
-        pygame.display.flip()
+            pygame.display.flip()
 
 if __name__ == "__main__":
     main_menu()
