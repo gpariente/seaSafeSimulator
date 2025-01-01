@@ -194,25 +194,42 @@ class TreeSearchAlgorithm(CollisionAvoidanceAlgorithm):
             ship_j_data (dict): Data of the second ship.
 
         Returns:
-            str: The COLREGs scenario ("head-on", "overtaking", or "crossing").
+            str: The COLREGs scenario ("head-on", "overtaking", "crossing-give-way", or "crossing-stand-on").
         """
-        heading_i = ship_i_data["heading"]
-        heading_j = ship_j_data["heading"]
-        relative_bearing = self._calculate_relative_bearing(ship_i_data["position"], heading_i, ship_j_data["position"])
+        theta_A = math.radians(ship_i_data["heading"])  # Own ship's heading in radians
+        theta_B = math.radians(ship_j_data["heading"])  # Target ship's heading in radians
+        D_AB = self._distance_nm(ship_i_data["position"][0], ship_i_data["position"][1],
+                                 ship_j_data["position"][0], ship_j_data["position"][1])  # Distance between ships
 
-        # Head-on: Approaching each other within 15 degrees from opposite directions
-        if abs(heading_i - heading_j) > 165 and abs(heading_i - heading_j) < 195:
-            return "head-on"
+        # Relative bearing of the target ship from the own ship
+        phi_AB = math.atan2(ship_j_data["position"][1] - ship_i_data["position"][1],
+                            ship_j_data["position"][0] - ship_i_data["position"][0])
+        if phi_AB < 0:
+            phi_AB += 2 * math.pi
 
-        # Overtaking: One ship is approaching the other from behind (within 67.5 degrees of the stern)
-        if self._is_overtaking(ship_i_data, ship_j_data, relative_bearing):
-            return "overtaking"
-        
-        if self._is_overtaking(ship_j_data, ship_i_data, relative_bearing):
-            return "overtaking"
+        # Relative course angle between the two ships
+        gamma_AB = abs(theta_A - theta_B)
 
-        # Crossing: Neither head-on nor overtaking, meaning they are crossing
-        return "crossing"
+        # Calculate q parameter as per the article
+        q = phi_AB - theta_A
+        if q > math.pi:
+            q -= 2 * math.pi
+        elif q < -math.pi:
+            q += 2 * math.pi
+
+        # Determine encounter situation based on q
+        if -5 <= math.degrees(q) <= 5:
+            scenario = "head-on"
+        elif -112.5 <= math.degrees(q) < -5:
+            scenario = "crossing-give-way"
+        elif 5 < math.degrees(q) <= 112.5:
+            scenario = "crossing-stand-on"
+        elif (112.5 < math.degrees(q) <= 180) or (-180 <= math.degrees(q) < -112.5):
+            scenario = "overtaking"
+        else:
+            scenario = "unknown"  # This should ideally not happen
+
+        return scenario
 
     def _is_overtaking(self, overtaker_data, other_data, relative_bearing):
         """
@@ -243,19 +260,15 @@ class TreeSearchAlgorithm(CollisionAvoidanceAlgorithm):
         if scenario == "head-on":
             return "give-way", "give-way"
         elif scenario == "overtaking":
-            # Determine which ship is the overtaker based on relative bearing and speed
-            relative_bearing = self._calculate_relative_bearing(ship_i_data["position"], ship_i_data["heading"], ship_j_data["position"])
-            if self._is_overtaking(ship_i_data, ship_j_data, relative_bearing):
+            # For simplicity, we assume the faster ship is the overtaking
+            if ship_i_data["speed"] > ship_j_data["speed"]:
                 return "give-way", "stand-on"
             else:
                 return "stand-on", "give-way"
-        elif scenario == "crossing":
-            # Determine which ship has the other on their starboard side
-            relative_bearing = self._calculate_relative_bearing(ship_i_data["position"], ship_i_data["heading"], ship_j_data["position"])
-            if 0 < relative_bearing < 180:
-                return "give-way", "stand-on"
-            else:
-                return "stand-on", "give-way"
+        elif scenario == "crossing-give-way":
+            return "give-way", "stand-on"
+        elif scenario == "crossing-stand-on":
+            return "stand-on", "give-way"
         else:
             return "unknown", "unknown"
 
