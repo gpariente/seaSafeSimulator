@@ -17,7 +17,7 @@ class Ship:
         self.cy_nm = self.source_nm_pos.y
 
         # The ship's current "display" status: "Green", "Orange", or "Red"
-        self.status = "Green"
+        self.status = None
 
         # Whether we're currently following an avoidance maneuver
         self.is_avoiding = False

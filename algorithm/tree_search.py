@@ -106,10 +106,8 @@ class TreeSearchAlgorithm(CollisionAvoidanceAlgorithm):
                 # Check for immediate collision
                 if self._is_immediate_collision(ship_i, ship_j, safety_zone_nm):
                     print(f"Immediate collision detected between Ship {ship_i.id} and Ship {ship_j.id}")
-                    if ship_i.status != "Red":
-                        ship_i.set_status("Red")
-                    if ship_j.status != "Red":
-                        ship_j.set_status("Red")
+                    ship_i.set_status("Red")
+                    ship_j.set_status("Red")
                     collision_pairs.append((i, j))
                     continue  # Continue to the next pair if immediate collision found
 
@@ -146,7 +144,7 @@ class TreeSearchAlgorithm(CollisionAvoidanceAlgorithm):
         Checks if there is an immediate collision between two ships.
         """
         dist_now = self._distance_nm(ship_i.cx_nm, ship_i.cy_nm, ship_j.cx_nm, ship_j.cy_nm)
-        return dist_now < safety_zone_nm
+        return dist_now < 2 * safety_zone_nm
 
     def _detect_future_collision(self, ship_i, ship_j, safety_zone_nm, observation):
             """

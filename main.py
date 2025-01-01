@@ -346,11 +346,11 @@ class ScenarioSimulation:
             line_len_x = int(15 * math.cos(heading_rad))  # Adjust based on scaling if necessary
             line_len_y = int(15 * math.sin(heading_rad))
             tip_x = ship_px_pos.x + line_len_x
-            tip_y = ship_px_pos.y + line_len_y
+            tip_y = ship_px_pos.y - line_len_y
             pygame.draw.line(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), (int(tip_x), int(tip_y)), 2)
 
             # If status is Orange or Red => show label with scenario/role
-            if ship.status in ("Orange", "Red") and ship.scenario is not None and ship.role is not None:
+            if ship.status == "Orange" and ship.scenario is not None and ship.role is not None:
                 label_font = INPUT_FONT
                 scenario_text = f"Scenario: {ship.scenario}"
                 role_text = f"Role: {ship.role}"
@@ -363,7 +363,7 @@ class ScenarioSimulation:
 
                 # Calculate label position with offset to prevent overlapping
                 label_x = int(ship_px_pos.x)
-                label_y = int(ship_px_pos.y + 10 + idx * 20)  # Offset based on ship index
+                label_y = int(ship_px_pos.y -10  - idx * 20)  # Offset based on ship index
 
                 # Draw background box
                 max_width = max(scenario_surf.get_width(), role_surf.get_width())
@@ -517,14 +517,14 @@ def new_scenario():
                 rel_y=0.5 + i * 0.07,
                 rel_w=0.15,
                 rel_h=0.03,
-                text="0,0" if i == 0 else "3,3"
+                text="1.5,0" if i == 0 else "0,1.5"
             )
             dest_box = InputBox(
                 rel_x=0.7 - 0.075,  # Adjusted to fit within window (centered around 0.7)
                 rel_y=0.5 + i * 0.07,
                 rel_w=0.15,
                 rel_h=0.03,
-                text="3,3" if i == 0 else "0,0"
+                text="1.5,3" if i == 0 else "3,1.5"
             )
             source_dest_boxes.append((src_box, dest_box))
 

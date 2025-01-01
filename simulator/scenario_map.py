@@ -55,9 +55,10 @@ class Map:
         :param nm_y: Y-coordinate in nautical miles.
         :return: Position object with pixel coordinates.
         """
-        pixel_x = nm_x * self.pixel_per_nm_x
-        pixel_y = nm_y * self.pixel_per_nm_y
-        return Position(pixel_x, pixel_y)
+        x_px = int((nm_x / self.map_size_nm) * self.window_width)
+        # Invert the y-coordinate calculation
+        y_px = int(self.window_height - (nm_y / self.map_size_nm) * self.window_height)
+        return Position(x_px, y_px)
 
     def get_map_rect(self):
         """
