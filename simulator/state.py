@@ -13,7 +13,6 @@ class State:
     def update_ships(self, delta_seconds=1):
         """
         Update the position of all ships based on a time delta (in seconds).
-        We'll call this with TIME_STEP_SECONDS (default 30.0).
         """
         for ship in self.ships:
             ship.update_position(delta_seconds)
@@ -21,10 +20,9 @@ class State:
     def increment_time_step(self):
         self.time_step += 1
 
-
     def get_observation(self):
         """
-        Returns a dictionary representing the observation (global view in this case).
+        Returns a dictionary representing the observation (global view).
         """
         observation = {
             "ships": [],
@@ -37,8 +35,8 @@ class State:
                 "heading": ship.get_heading_from_direction(),
                 "speed": ship.currentSpeed,
                 "status": ship.status,
-                "destination": (ship.destination_nm_pos.x, ship.destination_nm_pos.y), 
-                "role": ship.role,  
+                "destination": (ship.destination_nm_pos.x, ship.destination_nm_pos.y),
+                "role": ship.role,
                 "scenario": ship.scenario,
             })
         return observation

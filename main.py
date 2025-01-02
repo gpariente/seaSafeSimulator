@@ -8,9 +8,8 @@ from simulator.ship import Ship
 from simulator.state import State
 from simulator.position import Position
 from simulator.action import Action
-from algorithm.algorithm import ColregsAlgorithm  # You might want to remove this later
-from algorithm.tree_search import TreeSearchAlgorithm  # Import the new algorithm
-# from action_space import ShipActionSpace
+from algorithm.tree_search import TreeSearchAlgorithm
+# from algorithm.algorithm import ColregsAlgorithm  # (Potentially removed if not needed)
 
 pygame.init()
 
@@ -21,7 +20,7 @@ DEFAULT_WIDTH, DEFAULT_HEIGHT = 1000, 1000  # default fallback
 
 # 2) After we get the display info, we'll override these with a fraction of user's screen
 infoObject = pygame.display.Info()
-# For example, let's do 80% of user’s screen resolution
+# For example, let's do 40% x 70% of user’s screen resolution
 WIDTH = int(infoObject.current_w * 0.4)
 HEIGHT = int(infoObject.current_h * 0.7)
 
@@ -50,8 +49,8 @@ INPUT_FONT = get_dynamic_font(0.02)    # 2% of min dimension
 METERS_PER_NM = 1852.0
 SECONDS_PER_HOUR = 3600.0
 
-PHYSICS_STEP = 15.0          # each collision/logic step = 30s sim time
-REAL_SECONDS_PER_STEP = 0.5  # after 2 real seconds, we do a 30s step
+PHYSICS_STEP = 15.0          # each collision/logic step = 15s sim time (example)
+REAL_SECONDS_PER_STEP = 0.5  # after 0.5 real seconds, we do a 15s step
 
 # Initialize sea_bg and logo_image
 sea_bg = None
@@ -80,9 +79,9 @@ def scale_images_to_window():
     global logo_image, sea_bg, WIDTH, HEIGHT, TITLE_FONT, BUTTON_FONT, INPUT_FONT
 
     # Update fonts
-    TITLE_FONT = get_dynamic_font(0.05)    # 5% of min dimension
-    BUTTON_FONT = get_dynamic_font(0.03)   # 3% of min dimension
-    INPUT_FONT = get_dynamic_font(0.02)    # 2% of min dimension
+    TITLE_FONT = get_dynamic_font(0.05)
+    BUTTON_FONT = get_dynamic_font(0.03)
+    INPUT_FONT = get_dynamic_font(0.02)
 
     # Background
     sea_bg = pygame.transform.scale(sea_bg_raw, (WIDTH, HEIGHT))
@@ -252,6 +251,7 @@ class ScenarioSimulation:
         
         
         self.physics_step = physics_step
+        # Instantiate our new TreeSearchAlgorithm (with backtracking)
         self.search_algorithm = TreeSearchAlgorithm(self.action_space, self.physics_step, self.state.get_observation())
         self.horizon_nm = horizon_nm
         self.max_speed_knots = max_speed_knots
@@ -259,55 +259,46 @@ class ScenarioSimulation:
         
         self.scenario_ended = False
 
-        # if self.max_speed_knots > 0:
-        #     steps_per_hour = 3600.0 / PHYSICS_STEP
-        #     self.horizon_steps = int(horizon_nm * steps_per_hour / max_speed_knots)
-        # else:
-        #     self.horizon_steps = 0
-
-
     def update_simulation_state(self):
-                # Get the observation from the state
-                observation = self.state.get_observation()
-                observation["safety_zone_m"] = self.safety_zone_m
-                observation["horizon_nm"] = self.horizon_nm
-                observation["physics_step"] = self.physics_step
-                self.horizon_steps = self.calculate_horizon_steps(self.max_speed_knots, self.horizon_nm, self.physics_step)
-                observation["horizon_steps"] = self.horizon_steps
-                print(f"Horzion steps: {self.horizon_steps}")
-                
-                actions_indices = self.search_algorithm.choose_action(observation)
+        # Get the observation from the state
+        observation = self.state.get_observation()
+        observation["safety_zone_m"] = self.safety_zone_m
+        observation["horizon_nm"] = self.horizon_nm
+        observation["physics_step"] = self.physics_step
+        self.horizon_steps = self.calculate_horizon_steps(self.max_speed_knots, self.horizon_nm, self.physics_step)
+        observation["horizon_steps"] = self.horizon_steps
 
-                # Decode and apply actions
-                for i, ship in enumerate(self.state.ships):
-                    speed_change, heading_change = self.action_space.decode_action(actions_indices[i], ship)
-                    ship.change_speed(speed_change)
-                    ship.change_heading(heading_change)
+        # Choose actions (including any pre-planned maneuvers)
+        actions_indices = self.search_algorithm.choose_action(observation)
+
+        # Decode and apply actions
+        for i, ship in enumerate(self.state.ships):
+            speed_change, heading_change = self.action_space.decode_action(actions_indices[i], ship)
+            ship.change_speed(speed_change)
+            ship.change_heading(heading_change)
                     
-                # Update ship positions
-                self.state.update_ships(delta_seconds=self.physics_step)
+        # Update ship positions
+        self.state.update_ships(delta_seconds=self.physics_step)
 
-  
-                
-                statuses, scenarios, roles = self.search_algorithm.step(observation, self.state.ships)
+        # Run collision detection logic and (possibly) backtracking
+        statuses, scenarios, roles = self.search_algorithm.step(observation, self.state.ships)
 
-                # Update ship statuses only once based on detected collisions
-                for i, ship in enumerate(self.state.ships):
-                    ship.scenario = scenarios[i]
-                    ship.role = roles[i]
-                    ship.set_status(statuses[i])
+        # Update ship statuses based on detection
+        for i, ship in enumerate(self.state.ships):
+            ship.scenario = scenarios[i]
+            ship.role = roles[i]
+            ship.set_status(statuses[i])
 
-                # Check if scenario has ended
-                if not self.scenario_ended and self.state.isGoalState():
-                    self.scenario_ended = True
-                    
-                # Increment time step
-                self.state.increment_time_step()  
+        # Check if scenario has ended
+        if not self.scenario_ended and self.state.isGoalState():
+            self.scenario_ended = True
+
+        # Increment time step
+        self.state.increment_time_step()  
 
     @property
     def time_step(self):
         return self.state.time_step
-    
     
     def calculate_horizon_steps(self, max_speed_knots, horizon_nm, physics_step):
         """
@@ -321,7 +312,6 @@ class ScenarioSimulation:
 
     def draw_ships(self):
         # Determine map area
-        map_rect = self.map.get_map_rect()
         safety_zone_px_x = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm_x)
         safety_zone_px_y = int((self.safety_zone_m / METERS_PER_NM) * self.map.pixel_per_nm_y)
 
@@ -329,61 +319,50 @@ class ScenarioSimulation:
             ship_px_pos = self.map.nm_position_to_pixels(ship.cx_nm, ship.cy_nm)
 
             status_color_map = {"Green": GREEN, "Orange": ORANGE, "Red": RED}
-            print(f"Timestep: {self.time_step}, Ship {idx} status: {ship.status}")
             color = status_color_map.get(ship.status, GREEN)
-            # Draw safety zone ellipse (stretched if necessary)
+
+            # Draw safety zone ellipse
             pygame.draw.ellipse(SCREEN, color, 
                                 (int(ship_px_pos.x - safety_zone_px_x), 
-                                int(ship_px_pos.y - safety_zone_px_y),
-                                2 * safety_zone_px_x, 
-                                2 * safety_zone_px_y), 2)
+                                 int(ship_px_pos.y - safety_zone_px_y),
+                                 2 * safety_zone_px_x, 
+                                 2 * safety_zone_px_y), 2)
             # Draw ship position
             pygame.draw.circle(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), 5)
 
             # Draw heading line
             heading_deg = ship.get_heading_from_direction()
             heading_rad = math.radians(heading_deg)
-            line_len_x = int(15 * math.cos(heading_rad))  # Adjust based on scaling if necessary
+            line_len_x = int(15 * math.cos(heading_rad))
             line_len_y = int(15 * math.sin(heading_rad))
             tip_x = ship_px_pos.x + line_len_x
             tip_y = ship_px_pos.y - line_len_y
             pygame.draw.line(SCREEN, BLACK, (int(ship_px_pos.x), int(ship_px_pos.y)), (int(tip_x), int(tip_y)), 2)
 
             # If status is Orange or Red => show label with scenario/role
-            if ship.status == "Orange" and ship.scenario is not None and ship.role is not None:
+            if ship.status in ("Orange", "Red") and ship.scenario is not None and ship.role is not None:
                 label_font = INPUT_FONT
                 scenario_text = f"Scenario: {ship.scenario}"
                 role_text = f"Role: {ship.role}"
-                # heading_text = f"Heading: {int(heading_deg)}°"
 
-                # Render them line by line
                 scenario_surf = label_font.render(scenario_text, True, WHITE)
                 role_surf = label_font.render(role_text, True, WHITE)
-                # head_surf = label_font.render(heading_text, True, WHITE)
 
-                # Calculate label position with offset to prevent overlapping
                 label_x = int(ship_px_pos.x)
-                label_y = int(ship_px_pos.y -10  - idx * 20)  # Offset based on ship index
+                label_y = int(ship_px_pos.y - 10 - idx * 20)
 
-                # Draw background box
+                # Construct a background box for text
                 max_width = max(scenario_surf.get_width(), role_surf.get_width())
                 total_height = scenario_surf.get_height() + role_surf.get_height()
                 box_rect = pygame.Rect(label_x, label_y, max_width + 6, total_height + 6)
-
-                # Center the box horizontally around the ship
                 box_rect.centerx = label_x
-                # Adjust y position to prevent overlapping
                 box_rect.y = label_y + idx * 20
 
                 pygame.draw.rect(SCREEN, BLACK, box_rect)
-                # Blit each line
                 line_y = box_rect.y + 2
                 SCREEN.blit(scenario_surf, (box_rect.x + 3, line_y))
                 line_y += scenario_surf.get_height()
                 SCREEN.blit(role_surf, (box_rect.x + 3, line_y))
-                line_y += role_surf.get_height()
-                # SCREEN.blit(head_surf, (box_rect.x + 3, line_y))
-
 
     def update_window_size(self, window_width, window_height):
         """
@@ -397,20 +376,15 @@ class ScenarioSimulation:
         self.map.update_scaling()
 
 def main_menu():
-    """
-    Main menu screen with buttons: New Scenario, Load, Exit
-    """
     global WIDTH, HEIGHT, SCREEN, sea_bg, bg_scroll_speed, logo_image, logo_image_raw
 
     def new_scenario_callback():
         new_scenario()
 
-    # Define button dimensions and positions relative to window size
-    button_width_ratio, button_height_ratio = 0.3, 0.06  # 30% width, 6% height
-    button_spacing_ratio = 0.02  # 2% spacing
+    button_width_ratio, button_height_ratio = 0.3, 0.06
+    button_spacing_ratio = 0.02
 
-    # Calculate button positions to avoid overlapping
-    start_y = 0.4  # Starting y position for the first button
+    start_y = 0.4
 
     buttons = [
         Button(
@@ -443,7 +417,7 @@ def main_menu():
     bg_offset_x = 0
 
     while running:
-        dt = 1 / 60.0  # Not that critical here, but let's define
+        dt = 1 / 60.0
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -451,11 +425,9 @@ def main_menu():
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.VIDEORESIZE:
-                # User resized window => update WIDTH/HEIGHT + re-scale
                 WIDTH, HEIGHT = event.w, event.h
                 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
                 scale_images_to_window()
-                # Update all buttons' positions and sizes
                 for button in buttons:
                     button.update_rect()
                     button.update_font()
@@ -463,13 +435,11 @@ def main_menu():
                 for button in buttons:
                     button.check_click(event)
 
-        bg_offset_x = (bg_offset_x + bg_scroll_speed * WIDTH * 0.001) % WIDTH  # Adjust scroll speed based on WIDTH
+        bg_offset_x = (bg_offset_x + bg_scroll_speed * WIDTH * 0.001) % WIDTH
 
-        # Draw background
         SCREEN.blit(sea_bg, (-bg_offset_x, 0))
         SCREEN.blit(sea_bg, (-bg_offset_x + WIDTH, 0))
 
-        # Center the logo (e.g., top center)
         logo_rect_center = logo_image.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.2)))
         SCREEN.blit(logo_image, logo_rect_center)
 
@@ -479,9 +449,6 @@ def main_menu():
         pygame.display.flip()
 
 def new_scenario():
-    """
-    Screen for defining a new scenario: map size, horizon, safety zone, ships' positions, etc.
-    """
     global WIDTH, HEIGHT, SCREEN, sea_bg
 
     default_values = {
@@ -494,7 +461,6 @@ def new_scenario():
         "max_speed": "20",
     }
 
-    # Define input box relative positions and sizes
     input_boxes = {
         "map_size": InputBox(rel_x=0.5 - 0.1, rel_y=0.1, rel_w=0.2, rel_h=0.03, text=default_values["map_size"]),
         "num_ships": InputBox(rel_x=0.5 - 0.1, rel_y=0.15, rel_w=0.2, rel_h=0.03, text=default_values["num_ships"]),
@@ -513,14 +479,14 @@ def new_scenario():
         source_dest_boxes = []
         for i in range(min(num_ships, 8)):
             src_box = InputBox(
-                rel_x=0.3 - 0.075,  # Adjusted to fit within window (centered around 0.3)
+                rel_x=0.3 - 0.075,
                 rel_y=0.5 + i * 0.07,
                 rel_w=0.15,
                 rel_h=0.03,
                 text="1.5,0" if i == 0 else "0,1.5"
             )
             dest_box = InputBox(
-                rel_x=0.7 - 0.075,  # Adjusted to fit within window (centered around 0.7)
+                rel_x=0.7 - 0.075,
                 rel_y=0.5 + i * 0.07,
                 rel_w=0.15,
                 rel_h=0.03,
@@ -539,10 +505,9 @@ def new_scenario():
         ]
         start_scenario(inputs)
 
-    # Define submit button
     submit_button = Button(
         "Start Scenario",
-        rel_x=0.5 - 0.1,  # Centered, width 20%
+        rel_x=0.5 - 0.1,
         rel_y=0.9,
         rel_width=0.2,
         rel_height=0.05,
@@ -553,12 +518,11 @@ def new_scenario():
     while running:
         SCREEN.fill(WHITE)
 
-        # Render labels
         labels = [
-            "Map Size (Nautical Miles):",
+            "Map Size (NM):",
             "Number of Ships:",
             "Horizon Distance (NM):",
-            "Safety Zone Distance (m):",
+            "Safety Zone (m):",
             "Ship Width (m):",
             "Ship Length (m):",
             "Max Speed (knots):"
@@ -580,7 +544,7 @@ def new_scenario():
             SCREEN.blit(label_surface, label_pos)
             input_boxes[list(input_boxes.keys())[i]].draw(SCREEN)
 
-        # Render source and destination input boxes
+        # Render source/dest inputs
         for i, (src_box, dest_box) in enumerate(source_dest_boxes):
             source_label = INPUT_FONT.render(f"Ship {i + 1} Source (NM,NM):", True, BLACK)
             dest_label = INPUT_FONT.render("Destination (NM,NM):", True, BLACK)
@@ -589,7 +553,6 @@ def new_scenario():
             src_box.draw(SCREEN)
             dest_box.draw(SCREEN)
 
-        # Draw submit button
         submit_button.draw(SCREEN)
 
         for event in pygame.event.get():
@@ -598,11 +561,9 @@ def new_scenario():
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.VIDEORESIZE:
-                # User resized => update WIDTH/HEIGHT
                 WIDTH, HEIGHT = event.w, event.h
                 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
                 scale_images_to_window()
-                # Re-position input boxes
                 for box in input_boxes.values():
                     box.update_rect()
                     box.update_font()
@@ -634,14 +595,12 @@ def start_scenario(inputs):
     global WIDTH, HEIGHT, SCREEN, sea_bg
 
     map_size_nm = float(inputs.get("map_size", "3") or "3")
-    horizon_nm = float(inputs.get("horizon", "2") or "2")
+    horizon_nm = float(inputs.get("horizon", "5.0") or "5.0")
     safety_zone_m = float(inputs.get("safety_zone", "200") or "200")
     ship_width_m = float(inputs.get("ship_width", "200") or "200")
     ship_length_m = float(inputs.get("ship_length", "200") or "200")
     max_speed_knots = float(inputs.get("max_speed", "10") or "10")
     
-    
-
     ships_data = inputs.get("source_dest", [])
 
     simulation = ScenarioSimulation(
@@ -651,55 +610,44 @@ def start_scenario(inputs):
         window_height=HEIGHT,
         physics_step=PHYSICS_STEP
     )
-    
-
 
     running = True
     clock = pygame.time.Clock()
     real_time_accumulator = 0.0
 
     while running:
-            dt = clock.tick(60) / 1000.0  # Delta time in seconds
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                    pygame.quit()
-                    sys.exit()
-                elif event.type == pygame.VIDEORESIZE:
-                    WIDTH, HEIGHT = event.w, event.h
-                    SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-                    scale_images_to_window()
-                    # Update simulation map scaling
-                    simulation.update_window_size(WIDTH, HEIGHT)
+        dt = clock.tick(60) / 1000.0
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.VIDEORESIZE:
+                WIDTH, HEIGHT = event.w, event.h
+                SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+                scale_images_to_window()
+                simulation.update_window_size(WIDTH, HEIGHT)
 
-            # Accumulate real time
-            real_time_accumulator += dt
-            if real_time_accumulator >= REAL_SECONDS_PER_STEP:
-                real_time_accumulator -= REAL_SECONDS_PER_STEP
+        real_time_accumulator += dt
+        if real_time_accumulator >= REAL_SECONDS_PER_STEP:
+            real_time_accumulator -= REAL_SECONDS_PER_STEP
 
-                # Do one physics step
-                
-                # Draw background (could be a different color or image)
-                SCREEN.fill(BLUE)
+            SCREEN.fill(BLUE)
 
-                # Display simulation time step
-                time_surface = INPUT_FONT.render(f"Sim Time Step: {simulation.time_step}", True, WHITE)
-                SCREEN.blit(time_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.01)))
+            time_surface = INPUT_FONT.render(f"Sim Time Step: {simulation.time_step}", True, WHITE)
+            SCREEN.blit(time_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.01)))
 
-                # Display scenario status
-                if simulation.scenario_ended:
-                    ended_surface = INPUT_FONT.render("Scenario ended", True, WHITE)
-                    SCREEN.blit(ended_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
-                else:
-                    running_surface = INPUT_FONT.render("Scenario Running...", True, WHITE)
-                    SCREEN.blit(running_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
+            if simulation.scenario_ended:
+                ended_surface = INPUT_FONT.render("Scenario ended", True, WHITE)
+                SCREEN.blit(ended_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
+            else:
+                running_surface = INPUT_FONT.render("Scenario Running...", True, WHITE)
+                SCREEN.blit(running_surface, (int(WIDTH * 0.01), int(HEIGHT * 0.05)))
 
-                # Draw ships (only once per time step)
-                
-                simulation.draw_ships()
-                simulation.update_simulation_state()
+            simulation.draw_ships()
+            simulation.update_simulation_state()
 
-            pygame.display.flip()
+        pygame.display.flip()
 
 if __name__ == "__main__":
     main_menu()
